@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+
+# Local shop data — never publish
+*.db
+*.db-wal
+*.db-shm
+*.lock
+app.lock
+pharmacy.db
+backups/
+bills/
+*.yms
+*.xlsx
+*.pdf
+
+# Builds and packaged EXEs
+build/
+dist/
+*.exe
+*.zip
+YasirMedicalStore-Setup.spec
+
+# Local packaging leftovers
+sfx_stage/
+setup_extract_test/
+style_preview/
+
+# Secrets and machine files
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+.cursor/
+*.swp

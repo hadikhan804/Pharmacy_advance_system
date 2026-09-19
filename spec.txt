@@ -1,0 +1,380 @@
+# Yasir Medical Store — Pharmacy POS
+# Product spec — Revision 2 (data reliability + UX pass)
+
+Offline Windows desktop software for a Pakistani pharmacy. Brand name: **Yasir Medical Store**.
+Subtitle: **Pharmacy POS System**.
+
+This revision keeps everything already built (Rev 1) and adds requirements for
+data survivability, backup integrity, security, and UX. Items carried over
+from Rev 1 are unchanged unless marked **(CHANGED)**. New requirements are
+marked **(NEW)**.
+
+---
+
+## 1. Problem Statement
+
+A pharmacy owner in Pakistan runs his business mostly on paper registers or basic spreadsheets. That creates daily problems:
+
+- **No real-time stock visibility** — owner doesn't know what's actually in stock without physically counting.
+- **Expiry losses** — medicines expire on shelves because there is no alert system, causing direct financial loss.
+- **No profit tracking** — owner knows total sales but not actual profit (sale price – cost price) daily, weekly, monthly, or yearly.
+- **Manual sales records** — billing is slow, error-prone, and receipts are handwritten or not given.
+- **Udhaar (credit) chaos** — customer credit is tracked in notebooks, often lost or disputed.
+- **Supplier payables confusion** — no clean record of how much is owed to which distributor.
+- **No reports** — owner can't see top-selling medicines, slow movers, or company-wise sales.
+- **Batch & expiry mismanagement** — DRAP requires batch/expiry tracking, but paper systems fail at this.
+- **No backup** — if the register is lost or damaged, the entire business history is gone.
+- **Language barrier** — most software is English-only, hard for staff and owner to use comfortably.
+- **(NEW) Single point of failure** — if the PC, the app folder, or `%APPDATA%` is deleted, formatted, or the machine is replaced, the owner has no practical way to recover his data without technical help.
+
+The owner needs a **simple, offline, Urdu/English desktop application** that runs on a normal Windows PC, handles stock, sales, udhaar, payables, profit, and reports — and whose data survives the app itself being deleted, reinstalled, or moved to a new PC.
+
+---
+
+## 2. Product (what exists now)
+
+A single-PC Windows app named **Yasir Medical Store**. Fully offline. No cloud, no internet required after install.
+
+Default pharmacy name on receipts/settings: **Yasir Medical Store**.
+
+### 2.1 How to run
+
+```
+cd pharmacy_software
+.\.venv\Scripts\Activate.ps1
+python run.py
+```
+
+Or without activating:
+
+```
+.\.venv\Scripts\python.exe run.py
+```
+
+Dependencies (already in `.venv`): **Python 3.12**, **PySide6**, **openpyxl**, **cryptography**.
+
+Default login (first run):
+
+- Username: `admin`
+- Password: `admin123`
+- Role: Owner
+- App **forces a password change** before the main window opens (`must_change_password`).
+
+Database file (same folder as the EXE):
+
+- `pharmacy.db` is created next to `YasirMedicalStore.exe` the first time you run it.
+- If `pharmacy.db` is already in that folder, the app always opens it (replace/update the EXE, the data stays).
+- Backups default to a `backups` folder next to the EXE.
+- If the EXE folder is not writable, it falls back to `%APPDATA%\YasirMedicalStore\`.
+- If this folder has no database yet but an older `%APPDATA%\YasirMedicalStore\pharmacy.db` (or `PharmacyPOS`) exists, that file is copied once.
+
+### 2.2 Backup & data recovery **(CHANGED — expanded)**
+
+Rev 1 had: one automatic backup per day, stored under `%APPDATA%`, manual backup/restore in Settings. That is not enough on its own — `%APPDATA%` is deleted along with the rest of the profile in a reinstall, a "clean my PC" cleanup, or a format. Revision 2 requires:
+
+- **(NEW) Dual-location backup by default.** On first run, the setup wizard asks the owner to choose a secondary backup location outside the Windows profile — a USB drive, an external folder, or a detected cloud-sync folder (Google Drive / OneDrive / Dropbox desktop folder, if present on the machine). Every backup is written to `%APPDATA%\YasirMedicalStore\backups\` **and** to this secondary location. If the secondary location is unavailable at backup time (USB unplugged), the app queues it and retries on next launch, and shows a Settings warning until it succeeds.
+- **(NEW) Event-triggered backups, not just daily.** In addition to the once-per-day automatic backup on startup, trigger an incremental backup immediately after: end-of-day close, a completed purchase, and before any restore or destructive settings change.
+- **(NEW) Human-readable export alongside the binary backup.** Every backup cycle also writes an `.xlsx` export of medicines, current stock, sales summary, udhaar balances, and payables balances into the same backup folder. If the `.db` file is ever unreadable, the owner (or anyone helping him) can still open the numbers in Excel.
+- **(NEW) Backup integrity check.** After writing a backup, run `PRAGMA integrity_check` (or equivalent) on the copy. Settings shows "Last verified backup: <date/time>" and turns red if the most recent backup is missing, stale (>48h), or failed verification.
+- **(NEW) Backup retention/versioning.** Keep a rolling set — last 30 daily backups plus last 12 month-end backups — instead of overwriting the previous day's file. Protects against a bad backup overwriting the only good one.
+- **(NEW) Recover-on-install flow.** On a fresh install (no existing `pharmacy.db` found), the first-run wizard actively scans common locations — removable drives, `Documents`, detected cloud-sync folders — for a `pharmacy.db` or a prior `.xlsx`/zip export, and offers to restore it. The owner should not need to know what `%APPDATA%` is.
+- **(NEW) One-click "Export everything."** A single button in Settings produces one zip containing the current `.db`, the latest `.xlsx` export set, and a plain-language `readme.txt` explaining how to restore. Sized and named for emailing to yourself or copying to a USB stick — this is the "I'm switching computers" button.
+- **(NEW) Backup files are encrypted.** Backup `.db` and `.xlsx` files contain CNICs, phone numbers, and financial data, so they are encrypted at rest with a key derived from the owner's password, even though (per Rev 1) the live working database is not yet encrypted.
+
+Manual backup/restore in Settings is retained from Rev 1; restore is still blocked if the POS cart is not empty, and still asks for confirmation before overwrite.
+
+---
+
+## 3. Tech stack
+
+| Piece | Choice |
+|------|--------|
+| UI | Python + PySide6 (Qt), custom QSS (purple/gold, MedicsPK-inspired) |
+| Database | SQLite, WAL mode, foreign keys ON, busy timeout 5000ms |
+| Money | Integer **paisa** (PKR × 100). Display as `Rs x,xxx.xx` |
+| Passwords | PBKDF2-SHA256, 210000 iterations, random 16-byte salt |
+| i18n | JSON dictionaries `app/i18n/en.json` and `ur.json`, RTL when Urdu is selected |
+| Printing | QPrinter / QTextDocument — 80mm thermal + A4; PDF via QPrinter PdfFormat |
+| Excel | openpyxl |
+| Backup | sqlite3 backup API; restore copies file after WAL checkpoint; **(NEW)** dual-location writer, integrity check, retention manager, encrypted export |
+
+Architecture: UI pages call **services**; services use one SQLite connection and wrap sale/purchase/payment/return/adjust in **transactions**. Profit is snapshotted on each sale line (`sale_price − cost`) so later price changes do not rewrite history. GST collected is **not** counted as profit.
+
+---
+
+## 4. Roles and screens
+
+**Owner** — full sidebar:
+
+1. Dashboard
+2. Point of Sale
+3. Medicines
+4. Companies
+5. Formulations
+6. Suppliers
+7. Customers
+8. Stock
+9. Purchases
+10. Sales / Returns
+11. Udhaar
+12. Payables
+13. Expiry
+14. Reports
+15. Users
+16. Audit log
+17. Settings
+18. Logout
+
+**Cashier** — Point of Sale only (plus reprint last receipt from POS / F10).
+
+Global shortcuts (main window): **F2** search (opens POS), **F8** hold, **F9** pay, **F10** print last receipt. On POS: **Delete** removes selected cart line, **Esc** clears cart, **(NEW)** typing a quantity then an item barcode/name applies that quantity directly.
+
+UI chrome: top brand bar "YASIR MEDICAL STORE / PHARMACY POS SYSTEM", white icon sidebar with gold tiles, white content card, gold/purple buttons.
+
+**(NEW) First-run setup wizard.** Before the main window is used for the first time, a guided wizard collects: pharmacy name, address, phone, NTN, logo, default GST %, printer, language, and the secondary backup location (§2.2). Replaces scattering these into Settings after the fact.
+
+---
+
+## 5. Functional specification
+
+### A. User & Access
+
+- Login: username + password.
+- Roles: `owner`, `cashier`. Users can be active/inactive.
+- Owner can create users, change username/role, reset password, activate/deactivate.
+- First login for `admin` (and new users) requires password change (min 6 characters).
+- Session holds current user id/role.
+- **Audit log** of actions (login, CRUD, sales, purchases, payments, stock adjust, backup, settings). Searchable list: time, user, action, details.
+
+### B. Master data
+
+**Companies / manufacturers**
+- Fields: name (unique), notes, active.
+- Add / edit (double-click). Search by name.
+
+**Formulations**
+- Fields: name (unique), notes, active.
+- Examples: Paracetamol 500mg, Amoxicillin 250mg.
+
+**Medicines**
+- Brand name, generic name, company, formulation, category (Tablet/Capsule/Syrup/Injection/Cream/Drops/Other), unit (Tab, Cap, Syp, Inj, Crm, Oint, Drops, Sachet, Bottle, Pack, Other), pack size, GST %, barcode (unique, optional), controlled flag, reorder level, active.
+- Search by brand, generic, barcode. **(NEW)** Search also tolerates common Urdu-to-English phonetic spelling variants (e.g. "panadol"/"panadole").
+- List shows live stock qty.
+- **(NEW) Bulk import.** "Import from Excel" using a downloadable template (brand, generic, company, formulation, category, unit, pack size, GST, barcode, reorder level). Validates and reports row-level errors before committing.
+
+**Suppliers / distributors**
+- Name, phone, address, notes, active.
+- List shows payable balance.
+
+**Customers**
+- Name, CNIC, phone, address, notes, active.
+- List shows udhaar balance.
+
+### C. Stock management
+
+- **Stock in** via purchase (creates/updates batches) or **manual quantity adjust** on a batch (reason required, audited).
+- Batch fields: batch no, expiry (YYYY-MM-DD), qty, cost paisa, sale paisa.
+- Matching batch = same medicine + batch no + expiry; qty is added; cost/sale updated.
+- **Current stock** tab: per medicine — qty, reorder level, value at cost, value at sale.
+- **By batch** tab: all batches including expired flag.
+- **Stock ledger** tab: every in/out — purchase, purchase_return, sale, sale_return, adjustment — with user and timestamp.
+- Low stock: qty ≤ reorder_level (includes out of stock qty 0).
+- Valuation: sum of qty × cost and qty × sale for batches with qty > 0.
+
+### D. Expiry
+
+- Settings: `expiry_alert_days` default `30,60,90` (comma-separated).
+- Expiry page: one tab per window + **Expired** tab (qty > 0 and expiry < today).
+- **Hard block**: cannot add expired batch to cart; complete sale rejects `expiry < today`.
+- FEFO: sellable batches ordered by earliest expiry first; POS pre-selects that batch; cashier can pick another non-expired batch.
+- **(NEW)** On launch, if there are items expiring within 7 days or below reorder level, show a dismissible summary popup ("3 medicines expiring this week, 5 below reorder level") linking straight to the filtered list — no need to open Expiry/Stock manually.
+
+### E. Sales (POS)
+
+Layout: left search/add panel, right cart (purple CART header + customer), bottom totals bar.
+
+- Search brand / generic / barcode. Exact barcode + Enter auto-adds to cart.
+- Select product → shows FEFO batch, price, qty, line discount → **ADD TO CART**.
+- Line discount and bill discount. **(NEW)** Applied discount shown as a removable chip on the cart line — one click to clear, not just an editable field.
+- Payment: Cash, Card, Easypaisa, JazzCash, Credit (udhaar). Credit **requires a customer**.
+- Non-credit: paid defaults to bill total; **CHANGE** = paid − total.
+- Credit: paid can be partial; remainder is `due_paisa` on the sale.
+- Invoice number: daily counter `YYYYMMDD-0001`, `YYYYMMDD-0002`, …
+- Hold / resume held sales (stock is **not** deducted until checkout).
+- Checkout vs Checkout & Print. **(NEW)** A4/PDF invoices show a print preview before sending to print or file; 80mm thermal still prints directly when a printer is configured.
+- Receipt: 80mm thermal and A4. Pharmacy name, address, phone, **NTN**, items (batch + expiry), subtotal, discount, GST, total, paid, due, footer EN or UR by language. If a printer is saved in Settings, print goes there without a dialog; otherwise a print dialog is shown.
+- Controlled medicine: warning when selected.
+- Last completed invoice can be reprinted (F10).
+- **(NEW) Void sale.** A completed sale can be voided within a short window (e.g. same day, owner-only) — reverses stock and profit with a full audit trail, distinct from a formal customer return.
+
+Sale line stores: unit price, line discount, GST, **cost at sale**, **line_profit_paisa**.
+
+### F. Purchases
+
+- Multi-item purchase: supplier, supplier invoice no, date, paid amount, notes.
+- Each line: medicine, batch no, expiry, qty, cost, sale price.
+- Completing a purchase **adds stock** and writes ledger `in`.
+- Status: unpaid / partial / paid from remaining = total − returned − paid.
+- Record extra payment against a purchase.
+- Purchase return: qty per line + reason; stock out; increases `returned_paisa` (reduces payable).
+
+### G. Customers & udhaar
+
+- Credit sale posts due to the customer.
+- Payment at sale (if customer selected) is written to `customer_payments`.
+- Later **Record payment** applies FIFO to oldest dues.
+- Customer ledger: sales (debit), payments, returns (credit), running balance.
+- Udhaar list: customers with balance > 0 and oldest due date.
+- Overdue: sales with due > 0 older than `udhaar_overdue_days` (default 30).
+- Total udhaar on dashboard = sum of `due_paisa` on non-held sales.
+- **(NEW)** Exportable "who owes me money" list (name, phone, balance, oldest due date), formatted for handing off or reading over the phone.
+
+### H. Suppliers & payables
+
+- Payable = purchase total − returned − paid.
+- Record supplier payment: FIFO against oldest unpaid purchases.
+- Ledger: purchases (debit), purchase_payments, supplier_payments, purchase returns (credit).
+- Purchase history per supplier.
+- Payables list and dashboard total.
+
+### I. Profit & periods
+
+Dashboard and reports use the same totals:
+
+- Sale = sum of completed (non-held) invoice totals in range.
+- Profit = sum of line profits minus return profit reversals in range.
+
+Available: today, this week (Monday–today), this month, this year, custom from/to, this month vs last month, this year vs last year.
+Profit also available per medicine, company, formulation (report screens).
+
+### J. Owner dashboard
+
+Cards:
+
+- Today / week / month / year **sale** and **profit**
+- Stock value at cost and at sale
+- Expiring soon count (within 30 days)
+- Low-stock count
+- Total udhaar
+- Total payables
+- **(NEW)** Last backup status (verified date, or a warning if stale/missing)
+
+**(NEW)** Every count card is clickable and opens the underlying filtered list directly (e.g. "Low-stock count" → Stock page pre-filtered to low stock).
+
+Quick actions: Open POS, New purchase, Expiry list, Reports.
+
+### K. Reports (on screen + Excel + PDF)
+
+Report types:
+
+- Daily sales summary
+- Date-range sales
+- Daily / weekly / monthly / yearly profit
+- Top-selling medicines
+- Top customers
+- Expiry (batches within 90 days on the expiry report)
+- Low / out of stock
+- Stock valuation
+- Customer udhaar
+- Supplier payables
+- Sales by company
+- Sales by formulation
+- Purchase report
+- Comparison (this month vs last, this year vs last)
+
+Export: **Excel (.xlsx)** and **PDF**. Money columns converted from paisa.
+
+### L. Settings
+
+- Pharmacy name, address, phone, NTN, logo path
+- Receipt footer English and Urdu
+- Printer (from installed Windows printers)
+- Default GST %
+- Language: English / Urdu (reloads strings, sets RTL for Urdu)
+- Backup folder, **(NEW)** secondary backup location, Backup now, Restore (blocked if POS cart is not empty; confirm overwrite)
+- **(NEW)** Backup status panel: last verified backup time, retention list, "Export everything" button
+- Expiry alert days
+- Udhaar overdue days
+
+---
+
+## 6. Data model
+
+Tables: `users`, `audit_log`, `companies`, `formulations`, `medicines`, `suppliers`, `customers`, `batches`, `stock_ledger`, `purchases`, `purchase_items`, `purchase_payments`, `purchase_returns`, `sales`, `sale_items`, `sale_returns`, `customer_payments`, `supplier_payments`, `settings`.
+
+**(NEW)** `backup_log` — timestamp, location, integrity-check result, size, triggered-by (daily/event/manual).
+
+Indexes: barcode, brand, generic, batch medicine/expiry, sales invoice/date/customer/status, purchases supplier/date, ledger medicine/ts, customer phone/CNIC.
+
+Settings keys: pharmacy_name, pharmacy_address, pharmacy_phone, ntn, logo_path, receipt_footer_en, receipt_footer_ur, printer_name, default_gst, language, backup_folder, **(NEW)** secondary_backup_folder, expiry_alert_days, udhaar_overdue_days, last_auto_backup_date, **(NEW)** last_verified_backup_at.
+
+Sale status: `held` | `completed` | `returned` | **(NEW)** `voided`.
+Purchase payment status: `unpaid` | `partial` | `paid`.
+
+---
+
+## 7. Project layout
+
+```
+pharmacy_software/
+  run.py
+  requirements.txt
+  spec.txt
+  .venv/
+  app/
+    main.py, config.py, constants.py
+    db/          schema, connection (WAL), seed
+    auth/        PBKDF2 passwords, session
+    services/    audit, settings, users, medicines, stock,
+                 purchases, sales, customers, suppliers,
+                 dashboard, reports, backup
+    ui/          login, setup_wizard, main window, style.qss, pages/*, widgets
+    printing/    80mm + A4 receipt HTML, report HTML/PDF
+    i18n/        en.json, ur.json
+    backup/      re-exports backup_service (dual-location writer, integrity check, retention, encrypted export)
+    utils/       money (paisa), dates
+```
+
+---
+
+## 8. Non-functional
+
+| Area | Status |
+|------|--------|
+| Platform | Windows 10+ desktop, fully offline |
+| Reliability | SQLite WAL + explicit transactions on stock-changing operations |
+| Backup | **(CHANGED)** Dual-location (local + secondary), daily + event-triggered, integrity-checked, versioned/retained, human-readable Excel export alongside binary backup |
+| Recovery | **(NEW)** First-run "Recover My Data" scan; one-click "Export everything" zip |
+| Security | Hashed passwords; backup files encrypted **(NEW)**; live database file encryption still **not implemented** |
+| Usability | Keyboard shortcuts (extended), POS cart UI, icon sidebar, first-run setup wizard **(NEW)** |
+| Printing | 80mm thermal + A4, print preview for A4/PDF **(NEW)** |
+| Language | English + Urdu (RTL when Urdu selected), phonetic search tolerance **(NEW)** |
+| Compliance | Batch + expiry tracking; NTN printed on receipt when set in Settings |
+| Hardware target | Intended for a normal 4GB RAM PC (Python + Qt, not Electron) |
+
+---
+
+## 9. Out of scope (still not in this version)
+
+- Cloud sync / multi-branch (secondary backup location is a folder, not live sync)
+- Online ordering
+- Insurance claims
+- Mobile app
+- Accounting / tax filing integration (FBR, return filing)
+- **Live database encryption at rest** (backup files are encrypted; the working `.db` is not — flagged as the top remaining security gap)
+- Demo/sample medicine catalog (owner enters their own data)
+- Bundled installer / auto-update
+- SMS/WhatsApp udhaar reminders (export list only, for now)
+
+---
+
+## 10. Success criteria (product goals)
+
+- Owner can see **today's sale and profit** on the dashboard in one click.
+- Expiry windows (30/60/90, configurable) plus expired list; expired batches cannot be sold.
+- Stock is batch-accurate from purchases, sales, returns, and adjustments; ledger is the history.
+- Udhaar and supplier payables are ledgers with payments and reports.
+- Daily / weekly / monthly / yearly and date-range reports, exportable to PDF/Excel.
+- System runs 100% offline on a single Windows PC.
+- **(NEW)** If the app is deleted, the PC is reinstalled, or the owner switches computers, his data is recoverable within minutes from a secondary location — without needing to know what `%APPDATA%` is.
+- **(NEW)** At any point, the owner can produce one file (encrypted zip) that contains his entire business history and hand it to anyone for safekeeping.
