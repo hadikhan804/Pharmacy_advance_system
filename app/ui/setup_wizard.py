@@ -199,8 +199,20 @@ class SetupWizard(QDialog):
         if not item:
             error(self, t("select_row"))
             return
+        password = None
         try:
-            backup_service.restore_from(item.text())
+            backup_service.check_backup(item.text())
+        except backup_service.PasswordNeeded as exc:
+            from PySide6.QtWidgets import QInputDialog, QLineEdit
+
+            password, ok = QInputDialog.getText(self, t("restore"), str(exc), QLineEdit.EchoMode.Password)
+            if not ok:
+                return
+        except Exception as exc:
+            error(self, exc)
+            return
+        try:
+            backup_service.restore_from(item.text(), password)
             self._restored = True
             d = settings_service.pharmacy_info()
             self.name.setText(d["name"] or APP_TITLE)

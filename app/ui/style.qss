@@ -1,472 +1,361 @@
-* {
-    font-family: "Segoe UI", "Segoe UI Emoji", "Noto Naskh Arabic", "Urdu Typesetting", sans-serif;
-    font-size: 13px;
-}
 QMainWindow, QDialog, QMessageBox {
-    background: #0b0d12;
+    background-color: #0b0d12;
     color: #f4f5f7;
 }
 QWidget#Root {
-    background: #0b0d12;
+    background-color: #0b0d12;
 }
 QLabel {
-    background: transparent;
-    color: #f4f5f7;
+    background-color: transparent;
+    color: #e8eaef;
 }
-QFrame#BrandBar {
-    background: transparent;
+QScrollArea#PageScroll, QScrollArea#PageScroll > QWidget > QWidget {
+    background-color: transparent;
 }
+QLabel#SectionTitle {
+    color: #a79bff;
+    font-weight: 700;
+    padding-top: 4px;
+}
+QFrame#PeriodStrip {
+    background-color: #14161f;
+    border: 1px solid #2a2d3a;
+    border-radius: 12px;
+}
+QLabel#PeriodBadge {
+    background-color: #6d5efc;
+    color: #ffffff;
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-weight: 700;
+}
+QLabel#PeriodText { color: #d5d7e0; }
+QFrame#Card[accent="purple"] { border-left: 4px solid #6d5efc; }
+QFrame#Card[accent="green"] { border-left: 4px solid #34d399; }
+QFrame#Card[accent="gold"] { border-left: 4px solid #f5c84c; }
+QFrame#Card[accent="red"] { border-left: 4px solid #f87171; }
+QLabel#CardValue[warn="true"] { color: #f87171; }
+QLabel#WarnText { color: #fbbf24; }
+QGroupBox {
+    color: #d5d7e0;
+    border: 1px solid #22252f;
+    border-radius: 10px;
+    margin-top: 14px;
+    padding-top: 8px;
+}
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #a79bff; }
 QLabel#BrandMark {
-    background: #6d5efc;
+    background-color: #6d5efc;
     color: #ffffff;
     border-radius: 12px;
-    font-size: 18px;
-    font-weight: 800;
 }
 QLabel#BrandTitle {
     color: #ffffff;
-    font-size: 14px;
-    font-weight: 700;
-    letter-spacing: 0.2px;
 }
 QLabel#BrandSub, QLabel#UserRole {
     color: #8b8e9a;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
 }
-QFrame#Sidebar {
-    background: #0e1018;
-    border-radius: 0px;
+QFrame#AppHeader {
+    background-color: #0e1018;
     border: none;
-    border-right: 1px solid #1c1f2a;
+    border-bottom: 1px solid #1c1f2a;
 }
-QFrame#Sidebar QLabel#NavIcon {
-    background: #181b25;
-    color: #9aa0ae;
-    border-radius: 10px;
-    font-size: 14px;
-    font-weight: 700;
+QWidget#TopNavBar {
+    background-color: transparent;
 }
-QPushButton#NavButton {
-    background: transparent;
-    border: none;
-    border-radius: 12px;
-    text-align: left;
-    padding: 2px 6px;
-    color: #c5c8d4;
-    font-weight: 600;
+QPushButton#TopNav {
+    background-color: #14161f;
+    color: #d5d7e0;
+    border: 1px solid #22252f;
+    border-radius: 8px;
+    padding: 3px 10px;
+    min-height: 26px;
 }
-QPushButton#NavButton:hover {
-    background: #161822;
-}
-QPushButton#NavButton:checked {
-    background: #16192a;
-}
-QPushButton#NavButton:checked QLabel#NavIcon {
-    background: #6d5efc;
+QPushButton#TopNav:hover {
+    background-color: #1a1d28;
     color: #ffffff;
 }
-QPushButton#NavButton:checked QLabel#NavText {
+QPushButton#TopNav:checked {
+    background-color: #6d5efc;
     color: #ffffff;
-    font-weight: 700;
-}
-QLabel#NavText {
-    background: transparent;
-    color: #b8bcc8;
-    font-size: 13px;
-    font-weight: 600;
-}
-QLabel#UserChip {
-    background: transparent;
-    color: #8b8e9a;
-    border: none;
-    padding: 0px;
-    font-weight: 600;
+    border: 1px solid #6d5efc;
 }
 QPushButton#LogoutBtn {
-    background: #1a1418;
+    background-color: #1a1418;
     color: #f0a8b4;
     border: 1px solid #2a1c22;
-    border-radius: 12px;
-    padding: 10px;
-    font-weight: 700;
+    border-radius: 10px;
+    padding: 6px 12px;
 }
-QPushButton#LogoutBtn:hover { background: #24181c; }
+QPushButton#LogoutBtn:hover { background-color: #24181c; }
 QFrame#ContentShell {
-    background: #0b0d12;
-    border: none;
-    border-radius: 0px;
-}
-QFrame#TopBar {
-    background: transparent;
+    background-color: #0b0d12;
     border: none;
 }
-QPushButton#MenuBtn, QPushButton#IconBtn {
-    background: #14161f;
+QPushButton#IconBtn {
+    background-color: #14161f;
     color: #d5d7e0;
     border: 1px solid #22252f;
     border-radius: 10px;
-    padding: 8px 12px;
-    font-weight: 700;
+    padding: 6px 10px;
     min-width: 36px;
 }
-QPushButton#MenuBtn:hover, QPushButton#IconBtn:hover {
-    background: #1a1d28;
-}
+QPushButton#IconBtn:hover { background-color: #1a1d28; }
 QLabel#UserAvatar {
-    background: #f5c84c;
+    background-color: #f5c84c;
     color: #1a1400;
     border-radius: 16px;
-    font-size: 14px;
-    font-weight: 800;
 }
 QPushButton#Chip {
-    background: #6d5efc;
+    background-color: #6d5efc;
     color: #ffffff;
     border: none;
-    border-radius: 16px;
-    padding: 8px 14px;
-    font-weight: 700;
+    border-radius: 14px;
+    padding: 6px 12px;
 }
-QPushButton#Chip:hover { background: #5b4ee8; }
+QPushButton#Chip:hover { background-color: #5b4ee8; }
 QPushButton#ChipGold {
-    background: #f5c84c;
+    background-color: #f5c84c;
     color: #1a1400;
     border: none;
-    border-radius: 16px;
-    padding: 8px 14px;
-    font-weight: 800;
+    border-radius: 14px;
+    padding: 6px 12px;
 }
-QPushButton#ChipGold:hover { background: #f8d56a; }
+QPushButton#ChipGold:hover { background-color: #f8d56a; }
 QLabel#PageHeading {
     color: #ffffff;
-    font-size: 20px;
-    font-weight: 700;
 }
 QPushButton {
-    background: #6d5efc;
-    color: white;
+    background-color: #6d5efc;
+    color: #ffffff;
     border: none;
-    padding: 9px 16px;
-    border-radius: 12px;
-    font-weight: 700;
+    padding: 6px 12px;
+    border-radius: 10px;
+    min-height: 32px;
 }
-QPushButton:hover { background: #5b4ee8; }
-QPushButton:disabled { background: #2a2d3a; color: #6b6f7c; }
+QPushButton:hover { background-color: #5b4ee8; }
+QPushButton:disabled { background-color: #2a2d3a; color: #6b6f7c; }
 QPushButton#GoldBtn {
-    background: #f5c84c;
+    background-color: #f5c84c;
     color: #1a1400;
-    font-weight: 800;
-    padding: 12px 18px;
-    border-radius: 14px;
+    padding: 8px 14px;
+    border-radius: 12px;
 }
-QPushButton#GoldBtn:hover { background: #f8d56a; }
+QPushButton#GoldBtn:hover { background-color: #f8d56a; }
 QPushButton#DarkBtn {
-    background: #6d5efc;
-    color: white;
-    font-weight: 800;
-    padding: 12px 18px;
-    border-radius: 14px;
+    background-color: #6d5efc;
+    color: #ffffff;
+    padding: 8px 14px;
+    border-radius: 12px;
 }
-QPushButton#DarkBtn:hover { background: #5b4ee8; }
 QPushButton#GhostBtn {
-    background: #181b25;
+    background-color: #181b25;
     color: #d5d7e0;
     border: 1px solid #2a2d3a;
-    font-weight: 700;
 }
-QPushButton#GhostBtn:hover { background: #22252f; }
+QPushButton#GhostBtn:hover { background-color: #22252f; }
+QPushButton#DangerBtn {
+    background-color: #3a1418;
+    color: #fca5a5;
+    border: 1px solid #7f1d1d;
+}
+QPushButton#DangerBtn:hover { background-color: #4c1a20; }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QTextEdit, QPlainTextEdit {
-    background: #14161f;
+    background-color: #14161f;
     border: 1px solid #2a2d3a;
-    border-radius: 12px;
-    padding: 8px 12px;
-    min-height: 30px;
+    border-radius: 10px;
+    padding: 6px 10px;
+    min-height: 28px;
     color: #f4f5f7;
     selection-background-color: #6d5efc;
 }
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus, QTextEdit:focus {
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus {
     border: 1px solid #6d5efc;
-    background: #161822;
 }
 QComboBox QAbstractItemView {
-    background: #14161f;
+    background-color: #14161f;
     color: #f4f5f7;
     border: 1px solid #2a2d3a;
     selection-background-color: #6d5efc;
-    selection-color: #ffffff;
 }
 QComboBox::drop-down { border: none; width: 22px; }
 QLineEdit#PosSearch {
-    font-size: 14px;
-    min-height: 38px;
-    padding: 10px 14px;
-    border-radius: 14px;
-    background: #14161f;
+    min-height: 36px;
+    padding: 8px 12px;
+    border-radius: 12px;
 }
 QListWidget {
-    background: #14161f;
+    background-color: #14161f;
     border: 1px solid #22252f;
-    border-radius: 14px;
+    border-radius: 12px;
     padding: 4px;
     color: #f4f5f7;
 }
 QListWidget#PosResults::item {
-    padding: 10px 12px;
+    padding: 8px 10px;
     border-radius: 8px;
-    min-height: 22px;
 }
 QListWidget::item:selected, QListWidget::item:hover {
-    background: #1e2130;
+    background-color: #1e2130;
     color: #ffffff;
 }
 QTableWidget {
-    background: #10121a;
+    background-color: #10121a;
     gridline-color: transparent;
     border: 1px solid #1c1f2a;
-    border-radius: 14px;
+    border-radius: 12px;
     alternate-background-color: #14161f;
     color: #e8eaef;
 }
 QHeaderView::section {
-    background: #10121a;
+    background-color: #10121a;
     color: #8b8e9a;
-    padding: 10px 8px;
+    padding: 6px;
     border: none;
     border-bottom: 1px solid #22252f;
-    font-weight: 700;
-    font-size: 11px;
 }
 QTableWidget::item {
     padding: 6px 8px;
     border-bottom: 1px solid #1a1c24;
 }
 QTableWidget::item:selected {
-    background: #1e2130;
+    background-color: #1e2130;
     color: #ffffff;
 }
 QTableCornerButton::section {
-    background: #10121a;
+    background-color: #10121a;
     border: none;
 }
 QTabWidget::pane {
     border: 1px solid #22252f;
-    background: #10121a;
+    background-color: #10121a;
     border-radius: 12px;
 }
 QTabBar::tab {
-    background: #14161f;
+    background-color: #14161f;
     color: #8b8e9a;
     padding: 8px 16px;
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
-    font-weight: 600;
 }
 QTabBar::tab:selected {
-    background: #6d5efc;
-    color: white;
+    background-color: #6d5efc;
+    color: #ffffff;
 }
 QFrame#Card {
-    background: #14161f;
+    background-color: #14161f;
     border: 1px solid #22252f;
-    border-radius: 18px;
+    border-radius: 16px;
 }
 QFrame#Card:hover {
     border: 1px solid #6d5efc;
-    background: #181b28;
+    background-color: #181b28;
 }
-QLabel#CardTitle {
-    color: #8b8e9a;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.4px;
-}
-QLabel#CardValue {
-    font-size: 22px;
-    font-weight: 800;
-    color: #ffffff;
-}
+QLabel#CardTitle { color: #8b8e9a; }
+QLabel#CardValue { color: #ffffff; }
 QFrame#PosLeft, QFrame#PosRight {
-    background: #10121a;
+    background-color: #10121a;
     border: 1px solid #1c1f2a;
-    border-radius: 18px;
+    border-radius: 16px;
 }
 QFrame#CustomerBar {
-    background: #14161f;
-    border-top-left-radius: 18px;
-    border-top-right-radius: 18px;
+    background-color: #14161f;
     border-bottom: 1px solid #22252f;
 }
 QFrame#CartHeader {
-    background: #14161f;
+    background-color: #14161f;
     border-bottom: 1px solid #22252f;
 }
-QLabel#CartHeaderText {
-    color: #ffffff;
-    font-size: 15px;
-    font-weight: 800;
-    letter-spacing: 1.2px;
-}
+QLabel#CartHeaderText { color: #ffffff; }
 QLabel#CartCount {
-    background: #f5c84c;
+    background-color: #f5c84c;
     color: #1a1400;
     border-radius: 10px;
     padding: 4px 10px;
-    font-weight: 800;
-    font-size: 13px;
 }
 QFrame#ProductCard {
-    background: #14161f;
+    background-color: #14161f;
     border: 1px solid #22252f;
-    border-radius: 16px;
+    border-radius: 14px;
 }
-QLabel#ProductName {
-    font-size: 15px;
-    font-weight: 800;
-    color: #ffffff;
+QLabel#ProductName { color: #ffffff; }
+QLabel#ProductMeta { color: #8b8e9a; }
+QFrame#PriceSlot {
+    background-color: #10121a;
+    border: 1px solid #2a2d3a;
+    border-radius: 10px;
 }
-QLabel#ProductMeta {
-    color: #8b8e9a;
-    font-size: 12px;
-}
-QLabel#EmptyHint {
-    color: #6b6f7c;
-    font-size: 14px;
-    font-weight: 600;
-    padding: 36px 24px;
-}
+QLabel#EmptyHint { color: #6b6f7c; }
 QFrame#TotalsBar {
-    background: #14161f;
+    background-color: #14161f;
     border: 1px solid #22252f;
-    border-radius: 18px;
+    border-radius: 12px;
 }
 QLabel#TotalPill {
-    background: #f5c84c;
+    background-color: #f5c84c;
     color: #1a1400;
-    border-radius: 16px;
-    font-size: 20px;
-    font-weight: 800;
-    padding: 12px 18px;
+    border-radius: 10px;
+    padding: 6px 10px;
 }
-QLabel#MoneyText {
-    color: #ffffff;
-    font-size: 16px;
-    font-weight: 800;
-}
-QLabel#Muted {
-    color: #8b8e9a;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.4px;
-}
-QCheckBox, QRadioButton {
-    color: #d5d7e0;
-    spacing: 8px;
-}
+QLabel#MoneyText { color: #ffffff; }
+QLabel#Muted { color: #8b8e9a; }
+QCheckBox, QRadioButton { color: #d5d7e0; spacing: 8px; }
 QCheckBox::indicator, QRadioButton::indicator {
     width: 16px;
     height: 16px;
     border-radius: 4px;
     border: 1px solid #2a2d3a;
-    background: #14161f;
+    background-color: #14161f;
 }
 QCheckBox::indicator:checked, QRadioButton::indicator:checked {
-    background: #6d5efc;
+    background-color: #6d5efc;
     border: 1px solid #6d5efc;
 }
-QDialogButtonBox QPushButton {
-    min-width: 88px;
-}
-QCalendarWidget QWidget {
-    background: #14161f;
-    color: #f4f5f7;
-}
+QDialogButtonBox QPushButton { min-width: 88px; }
+QCalendarWidget QWidget { background-color: #14161f; color: #f4f5f7; }
 QCalendarWidget QAbstractItemView {
-    background: #14161f;
+    background-color: #14161f;
     color: #f4f5f7;
     selection-background-color: #6d5efc;
 }
 QToolTip {
-    background: #181b25;
+    background-color: #181b25;
     color: #f4f5f7;
     border: 1px solid #2a2d3a;
     padding: 6px 8px;
 }
 QScrollBar:vertical {
-    background: #0e1018;
+    background-color: #0e1018;
     width: 10px;
     border-radius: 5px;
 }
 QScrollBar::handle:vertical {
-    background: #2a2d3a;
+    background-color: #2a2d3a;
     min-height: 24px;
     border-radius: 5px;
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QScrollBar:horizontal {
-    background: #0e1018;
+    background-color: #0e1018;
     height: 10px;
     border-radius: 5px;
 }
 QScrollBar::handle:horizontal {
-    background: #2a2d3a;
+    background-color: #2a2d3a;
     min-width: 24px;
     border-radius: 5px;
 }
-QScrollArea { background: transparent; border: none; }
-QScrollArea > QWidget > QWidget { background: transparent; }
+QScrollArea { background-color: transparent; border: none; }
 QTextBrowser {
-    background: #ffffff;
+    background-color: #ffffff;
     color: #111111;
     border: 1px solid #22252f;
     border-radius: 12px;
     padding: 8px;
 }
 QMenu {
-    background: #14161f;
+    background-color: #14161f;
     color: #f4f5f7;
     border: 1px solid #22252f;
 }
-QMenu::item:selected { background: #6d5efc; }
-QPushButton#NavButton, QPushButton#NavButton:hover, QPushButton#NavButton:checked {
-    color: #c5c8d4;
-}
-QPushButton#NavButton {
-    background: transparent;
-}
-QPushButton#NavButton:hover {
-    background: #161822;
-}
-QPushButton#NavButton:checked {
-    background: #16192a;
-}
-QPushButton#NavButton QLabel#NavIcon {
-    background: #181b25;
-    color: #9aa0ae;
-    border-radius: 10px;
-}
-QPushButton#NavButton:checked QLabel#NavIcon {
-    background: #6d5efc;
-    color: #ffffff;
-}
-QPushButton#MenuBtn, QPushButton#IconBtn {
-    background: #14161f;
-    color: #d5d7e0;
-}
-QPushButton#Chip {
-    background: #6d5efc;
-    color: #ffffff;
-}
-QPushButton#ChipGold, QPushButton#GoldBtn {
-    background: #f5c84c;
-    color: #1a1400;
-}
-QPushButton#GhostBtn {
-    background: #181b25;
-    color: #d5d7e0;
-}
-QPushButton#LogoutBtn {
-    background: #1a1418;
-    color: #f0a8b4;
-}
+QMenu::item:selected { background-color: #6d5efc; }

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import shutil
 import tempfile
+import time
 import zipfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -12,7 +14,7 @@ from pathlib import Path
 from openpyxl import Workbook
 
 from app.auth.session import Session
-from app.config import backup_default_dir, db_path
+from app.config import app_dir, backup_default_dir, db_path, mirror_db_path
 from app.db.database import close_db, get_db
 from app.services import audit_service, settings_service
 from app.utils.crypto import decrypt_bytes, encrypt_bytes, new_salt
@@ -36,9 +38,72 @@ def _password() -> str | None:
 
 
 def local_backup_dir() -> Path:
-    path = Path(settings_service.get("backup_folder") or backup_default_dir())
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    raw = (settings_service.get("backup_folder") or "").strip()
+    if not raw:
+        return backup_default_dir()
+    path = Path(raw)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    except OSError:
+        return backup_default_dir()
+
+
+def normalize_settings() -> None:
+    """Point an old '<app>/backups' setting at the new data/backups folder."""
+    raw = (settings_service.get("backup_folder") or "").strip()
+    legacy = {
+        str(app_dir() / "backups"),
+        str(Path(os_environ_appdata()) / "HadiPharmacy" / "backups"),
+        str(Path(os_environ_appdata()) / "YasirMedicalStore" / "backups"),
+    }
+    if not raw or raw in legacy:
+        settings_service.set_value("backup_folder", str(backup_default_dir()))
+
+
+_last_mirror = 0.0
+MIRROR_EVERY_SECONDS = 600
+
+
+def _sales_count(db_file: Path) -> int:
+    try:
+        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
+        try:
+            return int(conn.execute("SELECT COUNT(*) FROM sales").fetchone()[0])
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return -1
+
+
+def mirror_now(force: bool = False) -> Path | None:
+    """Keep a plain copy of the DB outside the app folder so a reinstall can bring it back."""
+    global _last_mirror
+    if not force and time.monotonic() - _last_mirror < MIRROR_EVERY_SECONDS:
+        return None
+    dest = mirror_db_path()
+    meta = dest.with_suffix(".json")
+    tmp = dest.with_suffix(".tmp")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        source = str(db_path())
+        if dest.exists() and meta.exists():
+            prev = json.loads(meta.read_text(encoding="utf-8")).get("source")
+            if prev and prev != source:
+                mine = int(get_db().execute("SELECT COUNT(*) FROM sales").fetchone()[0])
+                if mine < _sales_count(dest):
+                    return None
+        _snapshot_db(tmp)
+        if not _integrity_ok(tmp):
+            tmp.unlink(missing_ok=True)
+            return None
+        os.replace(tmp, dest)
+        meta.write_text(json.dumps({"source": source, "ts": now_iso()}), encoding="utf-8")
+        _last_mirror = time.monotonic()
+        return dest
+    except (OSError, sqlite3.Error, ValueError):
+        tmp.unlink(missing_ok=True)
+        return None
 
 
 def secondary_dir() -> Path | None:
@@ -55,6 +120,7 @@ def _stamp() -> str:
 def _snapshot_db(dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     conn = get_db()
+    conn.commit()
     out = sqlite3.connect(str(dest))
     try:
         conn.backup(out)
@@ -73,28 +139,74 @@ def _integrity_ok(db_file: Path) -> bool:
         return False
 
 
+ENC_MAGIC = b"YMSENC1\n"
+
+
+class PasswordNeeded(ValueError):
+    """The backup is encrypted and the current owner password does not open it."""
+
+
+def _encrypt(data: bytes, password: str) -> bytes:
+    salt = _salt()
+    return ENC_MAGIC + salt + encrypt_bytes(data, password, salt)
+
+
+def _legacy_salts() -> list[bytes]:
+    """Old backups did not carry their salt; it lived only in the database (and its mirror copy)."""
+    found = [_salt()]
+    for db_file in (mirror_db_path(),):
+        try:
+            conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
+            try:
+                row = conn.execute("SELECT value FROM settings WHERE key='backup_salt'").fetchone()
+            finally:
+                conn.close()
+            if row and row[0] and bytes.fromhex(row[0]) not in found:
+                found.append(bytes.fromhex(row[0]))
+        except (sqlite3.Error, ValueError, OSError):
+            continue
+    return found
+
+
+def _decrypt(data: bytes, password: str) -> bytes:
+    if data.startswith(ENC_MAGIC):
+        salt = data[len(ENC_MAGIC) : len(ENC_MAGIC) + 16]
+        return decrypt_bytes(data[len(ENC_MAGIC) + 16 :], password, salt)
+    last: Exception | None = None
+    for salt in _legacy_salts():
+        try:
+            return decrypt_bytes(data, password, salt)
+        except ValueError as exc:
+            last = exc
+    raise last or ValueError("Wrong password or damaged backup")
+
+
 def _write_encrypted(src: Path, dest: Path) -> None:
     password = _password()
     data = src.read_bytes()
     if password:
-        dest.write_bytes(encrypt_bytes(data, password, _salt()))
+        dest.write_bytes(_encrypt(data, password))
     else:
         dest.write_bytes(data)
 
 
-def _read_maybe_encrypted(path: Path) -> bytes:
+def _is_plain(data: bytes) -> bool:
+    return data[:16].startswith(b"SQLite format 3") or data[:2] == b"PK"
+
+
+def _read_maybe_encrypted(path: Path, password: str | None = None) -> bytes:
     data = path.read_bytes()
-    password = _password()
-    if path.suffix in {".enc", ".yms"} or path.name.endswith(".db.enc") or path.name.endswith(".xlsx.enc"):
-        if not password:
-            raise ValueError("Owner password required to decrypt this backup")
-        return decrypt_bytes(data, password, _salt())
-    if password:
+    if _is_plain(data):
+        return data
+    candidates = [p for p in (password, _password()) if p]
+    if not candidates:
+        raise PasswordNeeded("This backup is locked with the owner password that was used when it was made.")
+    for pw in candidates:
         try:
-            return decrypt_bytes(data, password, _salt())
+            return _decrypt(data, pw)
         except ValueError:
-            return data
-    return data
+            continue
+    raise PasswordNeeded("Wrong password for this backup. Enter the owner password that was used when it was made.")
 
 
 def _log(location: str, kind: str, triggered_by: str, ok: int | None, size: int, details: str = "") -> None:
@@ -245,6 +357,11 @@ def run_backup(triggered_by: str = "manual") -> Path:
     try:
         folder = local_backup_dir()
         stamp = _stamp()
+        base = stamp
+        n = 1
+        while any(folder.glob(f"pharmacy_{stamp}.*")):
+            n += 1
+            stamp = f"{base}-{n}"
         tmp = Path(tempfile.mkdtemp(prefix="yms_bak_"))
         raw_db = tmp / "pharmacy.db"
         raw_xlsx = tmp / "export.xlsx"
@@ -265,6 +382,7 @@ def run_backup(triggered_by: str = "manual") -> Path:
         _log(str(db_out), "db", triggered_by, 1 if ok else 0, db_out.stat().st_size, "integrity " + ("ok" if ok else "FAIL"))
         _log(str(xlsx_out), "xlsx", triggered_by, 1, xlsx_out.stat().st_size, "")
         audit_service.log("backup.create", "backup", None, f"{triggered_by} {db_out}")
+        get_db().commit()
         copied = _copy_to_secondary([db_out, xlsx_out])
         if not copied:
             _log(str(secondary_dir() or ""), "secondary", triggered_by, 0, 0, "queued")
@@ -284,30 +402,79 @@ def backup_to(folder: str | Path | None = None) -> Path:
 
 
 def event_backup(reason: str) -> None:
-    if not _password():
-        return
     try:
         run_backup(reason)
     except Exception:
         pass
+    mirror_now(force=True)
 
 
 def auto_daily_if_needed() -> Path | None:
     last = settings_service.get("last_auto_backup_date", "")
     retry_pending_secondary()
-    if not _password():
-        return None
     if last == today() and not settings_service.get("pending_secondary"):
         return None
-    return run_backup("daily")
+    try:
+        return run_backup("daily")
+    except Exception:
+        return None
 
 
-def restore_from(file_path: str | Path) -> None:
+def _backup_db_bytes(src: Path, password: str | None) -> bytes:
+    """SQLite bytes from a .db / .db.enc backup or a .zip / .yms export. Current data is not touched."""
+    data = _read_maybe_encrypted(src, password)
+    if data[:2] == b"PK":
+        tmp = Path(tempfile.mkdtemp(prefix="yms_rst_"))
+        try:
+            zpath = tmp / "pack.zip"
+            zpath.write_bytes(data)
+            with zipfile.ZipFile(zpath, "r") as zf:
+                names = [n for n in zf.namelist() if n.lower().endswith(".db")]
+                if not names:
+                    raise ValueError("No database found in this export")
+                data = zf.read(names[0])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    if not data[:16].startswith(b"SQLite format 3"):
+        raise ValueError("File is not a pharmacy database")
+    return data
+
+
+def check_backup(file_path: str | Path, password: str | None = None) -> dict:
+    """Open a backup without restoring it. Raises PasswordNeeded / ValueError if it cannot be used."""
     src = Path(file_path)
     if not src.exists():
         raise ValueError("Backup file not found")
+    data = _backup_db_bytes(src, password)
+    tmp = Path(tempfile.mkdtemp(prefix="yms_chk_")) / "check.db"
+    tmp.write_bytes(data)
+    try:
+        conn = sqlite3.connect(tmp)
+        try:
+            if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise ValueError("This backup file is damaged")
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {"medicines", "sales", "settings"} <= tables:
+                raise ValueError("This file is not a Hadi Pharmacy backup")
+            info = {
+                "medicines": conn.execute("SELECT COUNT(*) FROM medicines").fetchone()[0],
+                "sales": conn.execute("SELECT COUNT(*) FROM sales").fetchone()[0],
+                "last_sale": conn.execute("SELECT MAX(date) FROM sales").fetchone()[0] or "",
+            }
+        finally:
+            conn.close()
+    finally:
+        shutil.rmtree(tmp.parent, ignore_errors=True)
+    return info
+
+
+def restore_from(file_path: str | Path, password: str | None = None) -> None:
+    src = Path(file_path)
+    check_backup(src, password)
+    data = _backup_db_bytes(src, password)
     run_backup("pre-restore")
     conn = get_db()
+    conn.commit()
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     close_db()
     target = db_path()
@@ -315,29 +482,13 @@ def restore_from(file_path: str | Path) -> None:
         extra = Path(str(target) + suffix)
         if extra.exists():
             extra.unlink()
-    if src.suffix.lower() in {".zip", ".yms"} or src.name.endswith(".zip.enc"):
-        data = _read_maybe_encrypted(src) if src.name.endswith(".enc") or src.suffix == ".yms" else src.read_bytes()
-        tmp = Path(tempfile.mkdtemp(prefix="yms_rst_"))
-        zpath = tmp / "pack.zip"
-        zpath.write_bytes(data)
-        with zipfile.ZipFile(zpath, "r") as zf:
-            zf.extractall(tmp)
-        db_files = list(tmp.rglob("*.db"))
-        if not db_files:
-            raise ValueError("No database found in export")
-        shutil.copy2(db_files[0], target)
-        shutil.rmtree(tmp, ignore_errors=True)
-    else:
-        raw = _read_maybe_encrypted(src)
-        if raw[:16].startswith(b"SQLite format 3"):
-            target.write_bytes(raw)
-        else:
-            raise ValueError("File is not a pharmacy database")
+    target.write_bytes(data)
     from app.db.database import init_db
 
     init_db()
     audit_service.log("backup.restore", "backup", None, str(src))
     get_db().commit()
+    mirror_now(force=True)
 
 
 def export_everything(dest_path: str | Path) -> Path:
@@ -349,13 +500,13 @@ def export_everything(dest_path: str | Path) -> Path:
     _snapshot_db(db_file)
     _write_xlsx(xlsx_file)
     readme.write_text(
-        "Yasir Medical Store — full export\n\n"
+        "Hadi Pharmacy — full export\n\n"
         "To restore on another PC:\n"
-        "1. Install Yasir Medical Store.\n"
+        "1. Install Hadi Pharmacy.\n"
         "2. Open the app and sign in as owner.\n"
         "3. Settings → Restore, and pick pharmacy.db from this folder "
         "(or this .yms file if it is still encrypted).\n"
-        "4. If the file is encrypted, use the same owner password used when exporting.\n",
+        "4. If the file is locked (.yms), the app asks for the owner password that was used when exporting.\n",
         encoding="utf-8",
     )
     zip_path = tmp / "pack.zip"
@@ -367,7 +518,7 @@ def export_everything(dest_path: str | Path) -> Path:
     password = _password()
     if password:
         dest = dest.with_suffix(".yms")
-        dest.write_bytes(encrypt_bytes(payload, password, _salt()))
+        dest.write_bytes(_encrypt(payload, password))
     else:
         dest = dest.with_suffix(".zip")
         dest.write_bytes(payload)
@@ -380,12 +531,17 @@ def export_everything(dest_path: str | Path) -> Path:
 def scan_recover_candidates() -> list[Path]:
     homes = Path.home()
     roots = [
+        homes / "Documents" / "HadiPharmacyBackups",
         homes / "Documents" / "YasirMedicalStoreBackups",
         homes / "Desktop",
         homes / "Downloads",
+        homes / "OneDrive" / "HadiPharmacyBackups",
         homes / "OneDrive" / "YasirMedicalStoreBackups",
+        homes / "Google Drive" / "HadiPharmacyBackups",
         homes / "Google Drive" / "YasirMedicalStoreBackups",
+        homes / "Dropbox" / "HadiPharmacyBackups",
         homes / "Dropbox" / "YasirMedicalStoreBackups",
+        Path(os_environ_appdata()) / "HadiPharmacy" / "backups",
         Path(os_environ_appdata()) / "YasirMedicalStore" / "backups",
         Path(os_environ_appdata()) / "PharmacyPOS" / "backups",
         local_backup_dir(),
@@ -394,10 +550,11 @@ def scan_recover_candidates() -> list[Path]:
         drive = Path(f"{letter}:/")
         if drive.exists():
             roots.append(drive)
+            roots.append(drive / "HadiPharmacyBackups")
             roots.append(drive / "YasirMedicalStoreBackups")
     found: list[Path] = []
     seen: set[str] = set()
-    patterns = ("pharmacy.db", "pharmacy_*.db", "pharmacy_*.db.enc", "*.yms", "Yasir*.zip", "Yasir*.yms")
+    patterns = ("pharmacy.db", "pharmacy_*.db", "pharmacy_*.db.enc", "*.yms", "Hadi*.zip", "Hadi*.yms", "Yasir*.zip", "Yasir*.yms")
 
     def _add(f: Path) -> None:
         try:
@@ -434,13 +591,13 @@ def os_environ_appdata() -> str:
 def suggested_secondary_folders() -> list[Path]:
     homes = Path.home()
     out = [
-        homes / "Documents" / "YasirMedicalStoreBackups",
-        homes / "OneDrive" / "YasirMedicalStoreBackups",
-        homes / "Google Drive" / "YasirMedicalStoreBackups",
-        homes / "Dropbox" / "YasirMedicalStoreBackups",
+        homes / "Documents" / "HadiPharmacyBackups",
+        homes / "OneDrive" / "HadiPharmacyBackups",
+        homes / "Google Drive" / "HadiPharmacyBackups",
+        homes / "Dropbox" / "HadiPharmacyBackups",
     ]
     for letter in "DEFGHIJKLMNOPQRSTUVWXYZ":
         drive = Path(f"{letter}:/")
         if drive.exists():
-            out.append(drive / "YasirMedicalStoreBackups")
+            out.append(drive / "HadiPharmacyBackups")
     return [p for p in out if p.parent.exists() or p.exists()]

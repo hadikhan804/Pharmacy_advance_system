@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout
 
+from app.config import EXPIRY_ALERT_DAYS
 from app.i18n import t
 from app.services import stock_service
 
@@ -17,10 +18,20 @@ class LaunchAlertDialog(QDialog):
         lab = QLabel(msg)
         lab.setWordWrap(True)
         layout.addWidget(lab)
+        names = []
+        for row in stock_service.expiring_within(EXPIRY_ALERT_DAYS)[:6]:
+            names.append(f"{row.get('brand_name')}  ({row.get('expiry')})")
+        for row in stock_service.low_stock()[:6]:
+            names.append(f"{row.get('brand_name')}  ≤ {row.get('reorder_level')}")
+        if names:
+            extra = QLabel("\n".join(names))
+            extra.setWordWrap(True)
+            extra.setObjectName("ProductMeta")
+            layout.addWidget(extra)
         if exp_n:
             btn_e = QPushButton(t("expiry"))
             btn_e.setObjectName("GoldBtn")
-            btn_e.clicked.connect(lambda: self._go("expiry", {"week": True}))
+            btn_e.clicked.connect(lambda: self._go("expiry", {"months6": True}))
             layout.addWidget(btn_e)
         if low_n:
             btn_l = QPushButton(t("low_stock"))
@@ -37,7 +48,7 @@ class LaunchAlertDialog(QDialog):
 
 
 def maybe_show(parent, navigate) -> None:
-    exp = stock_service.expiring_within(7)
+    exp = stock_service.expiring_within(EXPIRY_ALERT_DAYS)
     low = stock_service.low_stock()
     if not exp and not low:
         return

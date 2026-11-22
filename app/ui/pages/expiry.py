@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 
+from app.config import EXPIRY_ALERT_DAYS
 from app.i18n import t
 from app.services import settings_service, stock_service
 from app.ui.widgets.helpers import DataTable
@@ -24,7 +25,11 @@ class ExpiryPage(QWidget):
         for days in settings_service.expiry_windows():
             table = DataTable(headers)
             self.tables[str(days)] = table
-            self.tabs.addTab(table, f"{days} {t('expiry_date')}")
+            if days >= EXPIRY_ALERT_DAYS:
+                label = t("expiry_6_months")
+            else:
+                label = f"{days} {t('expiry_date')}"
+            self.tabs.addTab(table, label)
         expired = DataTable([t("brand"), t("batch"), t("expiry_date"), t("qty"), t("sale_price"), t("company")])
         self.tables["expired"] = expired
         self.tabs.addTab(expired, t("expired"))
@@ -35,6 +40,10 @@ class ExpiryPage(QWidget):
             keys = [k for k in self.tables if k != "expired"]
             if keys:
                 self.tabs.setCurrentIndex(0)
+        if extra.get("months6"):
+            keys = list(self.tables.keys())
+            if str(EXPIRY_ALERT_DAYS) in keys:
+                self.tabs.setCurrentIndex(keys.index(str(EXPIRY_ALERT_DAYS)))
 
     def retranslate(self) -> None:
         self._build_tabs()

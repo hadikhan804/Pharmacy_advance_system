@@ -20,10 +20,10 @@ from PySide6.QtWidgets import (
 
 from app.constants import PAYMENT_METHODS
 from app.i18n import t
-from app.services import medicine_service, purchase_service, supplier_service
-from app.ui.widgets.helpers import DataTable, SearchBar, error, info, money_spin, qty_spin
+from app.services import medicine_service, purchase_service
+from app.ui.widgets.helpers import DataTable, SearchBar, ask, error, info, money_spin, qty_spin, safe_delete
 from app.utils.dates import today
-from app.utils.money import format_pkr, to_paisa
+from app.utils.money import format_pkr, from_paisa, to_paisa
 from app.utils.pack import pack_to_units, unit_paisa, units_per_pack
 
 
@@ -35,24 +35,50 @@ class PurchasesPage(QWidget):
         self.add_btn.setObjectName("GoldBtn")
         self.pay_btn = QPushButton(t("record_payment"))
         self.ret_btn = QPushButton(t("purchase_return"))
+        self.del_btn = QPushButton(t("delete_purchase"))
+        self.del_btn.setObjectName("DangerBtn")
         self.add_btn.clicked.connect(self._new)
         self.pay_btn.clicked.connect(self._pay)
         self.ret_btn.clicked.connect(self._return)
-        self.search = SearchBar(lambda _: self.reload(), [self.add_btn, self.pay_btn, self.ret_btn])
+        self.del_btn.clicked.connect(self._delete)
+        self.search = SearchBar(lambda _: self.reload(), [self.add_btn, self.pay_btn, self.ret_btn, self.del_btn])
         layout.addWidget(self.search)
-        self.table = DataTable(
-            [t("date"), t("invoice"), t("supplier"), t("total"), t("paid"), t("due"), t("status")]
-        )
+        self.table = DataTable(self._headers())
         layout.addWidget(self.table)
         self.reload()
+
+    def _headers(self) -> list[str]:
+        return [t("date"), t("invoice"), t("company"), t("total"), t("paid"), t("due"), t("status")]
 
     def retranslate(self) -> None:
         self.add_btn.setText(t("new_purchase"))
         self.pay_btn.setText(t("record_payment"))
         self.ret_btn.setText(t("purchase_return"))
+        self.del_btn.setText(t("delete_purchase"))
         self.search.edit.setPlaceholderText(t("search"))
-        self.table.set_headers([t("date"), t("invoice"), t("supplier"), t("total"), t("paid"), t("due"), t("status")])
+        self.table.set_headers(self._headers())
         self.reload()
+
+    def _delete(self) -> None:
+        pid = self.table.selected_id()
+        if not pid:
+            error(self, t("select_row"))
+            return
+        p = purchase_service.get_purchase(pid)
+        reason = QLineEdit()
+        from app.ui.widgets.helpers import form_dialog
+
+        dlg = form_dialog(self, t("delete_purchase"), [(t("reason"), reason)])
+        if not dlg.exec():
+            return
+        if not reason.text().strip():
+            error(self, t("required"))
+            return
+        label = f"{p['supplier_name']} {p.get('invoice_no') or ''} ({format_pkr(p['total_paisa'])})"
+        if safe_delete(
+            self, label, lambda: purchase_service.delete_purchase(pid, reason.text()), t("delete_purchase_hint")
+        ):
+            self.reload()
 
     def reload(self) -> None:
         rows = purchase_service.list_purchases(self.search.edit.text())
@@ -149,10 +175,11 @@ class PurchaseDialog(QDialog):
         self.supplier = QComboBox()
         self.supplier.setEditable(True)
         self.supplier.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        for s in supplier_service.list_suppliers(active_only=True):
-            self.supplier.addItem(s["name"], s["id"])
+        for c in medicine_service.list_companies(active_only=True):
+            self.supplier.addItem(c["name"], c["id"])
+        self.supplier.setCurrentIndex(-1)
         if self.supplier.lineEdit():
-            self.supplier.lineEdit().setPlaceholderText(t("supplier"))
+            self.supplier.lineEdit().setPlaceholderText(t("company_type_or_pick"))
         self.invoice = QLineEdit()
         self.invoice.setPlaceholderText(t("invoice"))
         self.date = QDateEdit()
@@ -161,7 +188,7 @@ class PurchaseDialog(QDialog):
         self.paid = money_spin()
         self.notes = QLineEdit()
         self.notes.setPlaceholderText(t("notes"))
-        form.addRow(t("supplier"), self.supplier)
+        form.addRow(t("company"), self.supplier)
         form.addRow(t("invoice"), self.invoice)
         form.addRow(t("date"), self.date)
         form.addRow(t("paid"), self.paid)
@@ -184,6 +211,7 @@ class PurchaseDialog(QDialog):
         if self.med.lineEdit():
             self.med.lineEdit().setPlaceholderText(t("brand"))
             self.med.lineEdit().returnPressed.connect(self._add_line)
+        self.med.currentIndexChanged.connect(self._fill_medicine_prices)
         self.med.setCurrentIndex(-1)
 
         self.batch = QLineEdit()
@@ -201,7 +229,9 @@ class PurchaseDialog(QDialog):
         self.add_btn.setObjectName("GoldBtn")
         self.add_btn.clicked.connect(self._add_line)
 
-        self.table = DataTable([t("brand"), t("batch"), t("expiry_date"), t("packs"), t("pack_cost"), t("pack_sale"), ""])
+        self.table = DataTable(
+            [t("brand"), t("category"), t("batch"), t("expiry_date"), t("packs"), t("pack_cost"), t("pack_sale"), ""]
+        )
         self.table.setSortingEnabled(False)
         self.table.verticalHeader().setDefaultSectionSize(44)
         layout.addWidget(self.table, 1)
@@ -216,8 +246,11 @@ class PurchaseDialog(QDialog):
 
     def _install_editor_row(self) -> None:
         self.table.setRowCount(1)
+        self.cat_lab = QLineEdit()
+        self.cat_lab.setReadOnly(True)
+        self.cat_lab.setPlaceholderText(t("category"))
         for col, widget in enumerate(
-            (self.med, self.batch, self.expiry, self.qty, self.cost, self.sale, self.add_btn)
+            (self.med, self.cat_lab, self.batch, self.expiry, self.qty, self.cost, self.sale, self.add_btn)
         ):
             self.table.setCellWidget(0, col, widget)
 
@@ -225,10 +258,24 @@ class PurchaseDialog(QDialog):
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        widths = {1: 120, 2: 140, 3: 90, 4: 130, 5: 130, 6: 88}
+        widths = {1: 110, 2: 110, 3: 130, 4: 80, 5: 120, 6: 120, 7: 80}
         for col, width in widths.items():
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
             self.table.setColumnWidth(col, width)
+
+    def _fill_medicine_prices(self) -> None:
+        mid, _brand = self._resolve_medicine()
+        if not mid:
+            if hasattr(self, "cat_lab"):
+                self.cat_lab.clear()
+            return
+        med = medicine_service.get_medicine(mid) or {}
+        if hasattr(self, "cat_lab"):
+            self.cat_lab.setText(med.get("category") or "")
+        if not self.cost.value():
+            self.cost.setValue(from_paisa(int(med.get("cost_paisa") or 0)))
+        if not self.sale.value():
+            self.sale.setValue(from_paisa(int(med.get("sale_paisa") or 0)))
 
     def _resolve_medicine(self) -> tuple[int | None, str]:
         mid = self.med.currentData()
@@ -247,16 +294,19 @@ class PurchaseDialog(QDialog):
         return None, label
 
     def _resolve_supplier(self):
+        """Company id for this purchase. A new name creates the company after confirmation."""
+        typed = self.supplier.currentText().strip()
         sid = self.supplier.currentData()
-        if sid:
+        if sid and self.supplier.itemText(self.supplier.currentIndex()) == typed:
             return sid
-        name = self.supplier.currentText().strip().lower()
-        if not name:
+        if not typed:
             return None
         for i in range(self.supplier.count()):
-            if name == self.supplier.itemText(i).lower() or name in self.supplier.itemText(i).lower():
+            if typed.lower() == self.supplier.itemText(i).lower():
                 return self.supplier.itemData(i)
-        return None
+        if not ask(self, t("create_company_q").replace("{name}", typed)):
+            return None
+        return medicine_service.get_or_create_company(typed)
 
     def _refresh_table(self) -> None:
         self.table.setSortingEnabled(False)
@@ -266,6 +316,7 @@ class PurchaseDialog(QDialog):
         for r, x in enumerate(self.lines, start=1):
             values = [
                 x["brand"],
+                x.get("category") or "",
                 x["batch_no"],
                 x["expiry"],
                 f"{x.get('packs', 1)} pk · {x['qty']} tab",
@@ -275,7 +326,7 @@ class PurchaseDialog(QDialog):
             ]
             for c, text in enumerate(values):
                 item = QTableWidgetItem(text)
-                if c in (3, 4, 5):
+                if c in (4, 5, 6):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(r, c, item)
         self._fit_columns()
@@ -300,10 +351,13 @@ class PurchaseDialog(QDialog):
             {
                 "medicine_id": mid,
                 "brand": brand,
+                "category": med.get("category") or "",
                 "batch_no": batch,
                 "expiry": self.expiry.date().toString("yyyy-MM-dd"),
                 "packs": packs,
                 "qty": tablets,
+                "pack_cost_one": pack_cost,
+                "pack_sale_one": pack_sale,
                 "pack_cost_paisa": pack_cost * packs,
                 "pack_sale_paisa": pack_sale * packs,
                 "cost_paisa": unit_paisa(pack_cost, upp),

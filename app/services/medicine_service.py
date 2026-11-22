@@ -12,21 +12,141 @@ def list_companies(active_only: bool = False) -> list[dict]:
     return rows_to_dicts(get_db().execute(sql).fetchall())
 
 
-def save_company(name: str, notes: str = "", company_id: int | None = None, active: bool = True) -> int:
+def save_company(
+    name: str,
+    notes: str = "",
+    company_id: int | None = None,
+    active: bool = True,
+    phone: str | None = None,
+    address: str | None = None,
+) -> int:
+    from app.services.supplier_service import sync_company
+
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Company name is required")
+    clash = get_db().execute(
+        "SELECT id FROM companies WHERE lower(name) = lower(?) AND id != ?", (name, company_id or 0)
+    ).fetchone()
+    if clash:
+        raise ValueError(f"A company named '{name}' already exists")
     with transaction() as conn:
         if company_id:
+            old = conn.execute("SELECT phone, address FROM companies WHERE id = ?", (company_id,)).fetchone()
+            phone = (old["phone"] or "") if phone is None else phone
+            address = (old["address"] or "") if address is None else address
             conn.execute(
-                "UPDATE companies SET name = ?, notes = ?, active = ? WHERE id = ?",
-                (name.strip(), notes, 1 if active else 0, company_id),
+                "UPDATE companies SET name = ?, notes = ?, active = ?, phone = ?, address = ? WHERE id = ?",
+                (name, notes, 1 if active else 0, phone.strip(), address.strip(), company_id),
             )
+            sync_company(conn, company_id, name, phone, address)
             audit_service.log("company.update", "companies", company_id, name)
             return company_id
         cur = conn.execute(
-            "INSERT INTO companies(name, notes, active) VALUES (?, ?, ?)",
-            (name.strip(), notes, 1 if active else 0),
+            "INSERT INTO companies(name, notes, active, phone, address) VALUES (?, ?, ?, ?, ?)",
+            (name, notes, 1 if active else 0, (phone or "").strip(), (address or "").strip()),
         )
         audit_service.log("company.create", "companies", cur.lastrowid, name)
         return cur.lastrowid
+
+
+def list_companies_full(search: str = "") -> list[dict]:
+    like = f"%{search.strip()}%"
+    return rows_to_dicts(
+        get_db().execute(
+            """
+            SELECT c.*,
+                   (SELECT COUNT(*) FROM medicines m WHERE m.company_id = c.id) AS medicine_count,
+                   COALESCE((
+                       SELECT SUM(p.total_paisa - p.returned_paisa - p.paid_paisa)
+                       FROM purchases p JOIN suppliers s ON s.id = p.supplier_id
+                       WHERE s.company_id = c.id
+                   ), 0) AS payable_paisa
+            FROM companies c
+            WHERE (? = '' OR c.name LIKE ? OR IFNULL(c.phone,'') LIKE ?)
+            ORDER BY c.active DESC, c.name
+            """,
+            (search.strip(), like, like),
+        ).fetchall()
+    )
+
+
+def _count(sql: str, value) -> int:
+    return int(get_db().execute(sql, (value,)).fetchone()[0])
+
+
+def delete_company(company_id: int) -> str:
+    """Delete if never used; otherwise archive so purchases, dues and medicines keep their history."""
+    row = get_db().execute("SELECT name FROM companies WHERE id = ?", (company_id,)).fetchone()
+    if not row:
+        raise ValueError("Company not found")
+    meds = _count("SELECT COUNT(*) FROM medicines WHERE company_id = ?", company_id)
+    buys = _count(
+        "SELECT COUNT(*) FROM purchases p JOIN suppliers s ON s.id = p.supplier_id WHERE s.company_id = ?", company_id
+    )
+    pays = _count(
+        "SELECT COUNT(*) FROM supplier_payments sp JOIN suppliers s ON s.id = sp.supplier_id WHERE s.company_id = ?",
+        company_id,
+    )
+    with transaction() as conn:
+        if meds or buys or pays:
+            conn.execute("UPDATE companies SET active = 0 WHERE id = ?", (company_id,))
+            audit_service.log("company.archive", "companies", company_id, row["name"])
+            return "archived"
+        conn.execute("DELETE FROM suppliers WHERE company_id = ?", (company_id,))
+        conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+        audit_service.log("company.delete", "companies", company_id, row["name"])
+        return "deleted"
+
+
+def delete_formulation(formulation_id: int) -> str:
+    row = get_db().execute("SELECT name FROM formulations WHERE id = ?", (formulation_id,)).fetchone()
+    if not row:
+        raise ValueError("Formulation not found")
+    with transaction() as conn:
+        if _count("SELECT COUNT(*) FROM medicines WHERE formulation_id = ?", formulation_id):
+            conn.execute("UPDATE formulations SET active = 0 WHERE id = ?", (formulation_id,))
+            audit_service.log("formulation.archive", "formulations", formulation_id, row["name"])
+            return "archived"
+        conn.execute("DELETE FROM formulations WHERE id = ?", (formulation_id,))
+        audit_service.log("formulation.delete", "formulations", formulation_id, row["name"])
+        return "deleted"
+
+
+def medicine_usage(medicine_id: int) -> dict:
+    return {
+        "stock": _count("SELECT COALESCE(SUM(qty),0) FROM batches WHERE medicine_id = ?", medicine_id),
+        "sales": _count("SELECT COUNT(*) FROM sale_items WHERE medicine_id = ?", medicine_id),
+        "purchases": _count("SELECT COUNT(*) FROM purchase_items WHERE medicine_id = ?", medicine_id),
+        "ledger": _count("SELECT COUNT(*) FROM stock_ledger WHERE medicine_id = ?", medicine_id),
+    }
+
+
+def delete_medicine(medicine_id: int) -> str:
+    """Remove a medicine from the shop everywhere (POS, stock, dashboard, expiry, alerts).
+
+    Never bought or sold: erased together with its stock.
+    Has bills or purchases: archived so old bills stay correct, and its remaining stock is written off.
+    """
+    from app.constants import REF_ADJUST
+    from app.services.stock_service import remove_stock
+
+    med = get_medicine(medicine_id)
+    if not med:
+        raise ValueError("Medicine not found")
+    use = medicine_usage(medicine_id)
+    with transaction() as conn:
+        if use["sales"] or use["purchases"]:
+            for b in conn.execute("SELECT id, qty FROM batches WHERE medicine_id = ? AND qty > 0", (medicine_id,)).fetchall():
+                remove_stock(conn, b["id"], b["qty"], REF_ADJUST, medicine_id, "Medicine deleted")
+            conn.execute("UPDATE medicines SET active = 0 WHERE id = ?", (medicine_id,))
+            audit_service.log("medicine.archive", "medicines", medicine_id, f"{med['brand_name']} stock written off={use['stock']}")
+            return "archived"
+        conn.execute("DELETE FROM stock_ledger WHERE medicine_id = ?", (medicine_id,))
+        conn.execute("DELETE FROM batches WHERE medicine_id = ?", (medicine_id,))
+        conn.execute("DELETE FROM medicines WHERE id = ?", (medicine_id,))
+        audit_service.log("medicine.delete", "medicines", medicine_id, f"{med['brand_name']} stock={use['stock']}")
+        return "deleted"
 
 
 def list_formulations(active_only: bool = False) -> list[dict]:
@@ -107,14 +227,44 @@ def get_medicine(medicine_id: int) -> dict | None:
 
 
 def save_medicine(data: dict, medicine_id: int | None = None) -> int:
+    category = (data.get("category") or "").strip()
+    if not category:
+        raise ValueError("Category is required")
+    if not (data.get("brand_name") or "").strip():
+        raise ValueError("Brand name is required")
+    if int(data.get("sale_paisa") or 0) and int(data.get("cost_paisa") or 0) > int(data.get("sale_paisa") or 0):
+        raise ValueError("Cost price is higher than sale price. Check the prices.")
+    if not medicine_id:
+        upp_new = max(1, int(data.get("units_per_pack") or 1))
+        dup = get_db().execute(
+            """
+            SELECT id, brand_name, active FROM medicines
+            WHERE lower(trim(brand_name)) = lower(trim(?)) AND IFNULL(units_per_pack,1) = ?
+            ORDER BY active DESC, id LIMIT 1
+            """,
+            (data["brand_name"], upp_new),
+        ).fetchone()
+        if dup and dup["active"]:
+            raise ValueError(f"'{dup['brand_name']}' already exists. Use Edit or Restock instead of adding it again.")
+        if dup:
+            medicine_id = dup["id"]
+            data = dict(data, active=True)
     barcode = (data.get("barcode") or "").strip() or None
+    if barcode:
+        clash = get_db().execute(
+            "SELECT id, brand_name, active FROM medicines WHERE barcode = ? AND id != ?", (barcode, medicine_id or 0)
+        ).fetchone()
+        if clash and clash["active"]:
+            raise ValueError(f"Barcode {barcode} is already used by '{clash['brand_name']}'")
+        if clash:
+            get_db().execute("UPDATE medicines SET barcode = NULL WHERE id = ?", (clash["id"],))
     gst = float(data.get("gst_pct") if data.get("gst_pct") not in (None, "") else settings_service.default_gst())
     fields = (
         data["brand_name"].strip(),
         (data.get("generic_name") or "").strip(),
         data.get("formulation_id") or None,
         data.get("company_id") or None,
-        data.get("category") or "",
+        category,
         data.get("unit") or "",
         data.get("pack_size") or "",
         gst,

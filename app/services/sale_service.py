@@ -34,7 +34,10 @@ def _line_totals(item: dict) -> tuple[int, int, int, int]:
     discount = int(item.get("discount_paisa") or 0)
     gst_pct = float(item.get("gst_pct") or 0)
     cost = int(item["cost_paisa"])
-    base = unit * qty - discount
+    if item.get("line_base_paisa") is not None:
+        base = int(item["line_base_paisa"]) - discount
+    else:
+        base = unit * qty - discount
     if base < 0:
         base = 0
     gst = int(round(base * gst_pct / 100.0))
@@ -48,7 +51,8 @@ def list_sales(search: str = "", status: str | None = None, user_id: int | None 
         SELECT s.*, c.name AS customer_name, u.username,
                COALESCE((SELECT SUM(line_profit_paisa) FROM sale_items si WHERE si.sale_id = s.id), 0)
                  - COALESCE((SELECT SUM(profit_reversal_paisa) FROM sale_returns sr WHERE sr.sale_id = s.id), 0)
-                 AS profit_paisa
+                 AS profit_paisa,
+               COALESCE((SELECT SUM(amount_paisa) FROM sale_returns sr WHERE sr.sale_id = s.id), 0) AS returned_paisa
         FROM sales s
         LEFT JOIN customers c ON c.id = s.customer_id
         LEFT JOIN users u ON u.id = s.user_id
@@ -167,14 +171,24 @@ def complete_sale(
         due = total - paid
     invoice = next_invoice_no()
     with transaction() as conn:
+        need: dict[int, int] = {}
         for item in items:
-            batch = conn.execute("SELECT * FROM batches WHERE id = ?", (item["batch_id"],)).fetchone()
+            if int(item["qty"]) <= 0:
+                raise ValueError("Quantity must be more than 0")
+            need[item["batch_id"]] = need.get(item["batch_id"], 0) + int(item["qty"])
+        for batch_id, qty in need.items():
+            batch = conn.execute(
+                "SELECT b.*, m.brand_name, m.active FROM batches b JOIN medicines m ON m.id = b.medicine_id WHERE b.id = ?",
+                (batch_id,),
+            ).fetchone()
             if not batch:
-                raise ValueError("Batch not found")
+                raise ValueError("A medicine in the cart no longer exists. Remove it and add it again.")
+            if not batch["active"]:
+                raise ValueError(f"'{batch['brand_name']}' was deleted. Remove it from the cart.")
             if batch["expiry"] < today():
-                raise ValueError("Cannot sell expired batch")
-            if batch["qty"] < int(item["qty"]):
-                raise ValueError("Insufficient stock")
+                raise ValueError(f"Cannot sell expired batch of '{batch['brand_name']}'")
+            if batch["qty"] < qty:
+                raise ValueError(f"Insufficient stock for '{batch['brand_name']}': {batch['qty']} left, cart has {qty}")
         if held_id:
             conn.execute("DELETE FROM sale_items WHERE sale_id = ?", (held_id,))
             conn.execute("DELETE FROM sales WHERE id = ?", (held_id,))
@@ -286,11 +300,11 @@ def return_sale(sale_id: int, lines: list[dict], reason: str) -> None:
                 ),
             )
             any_return = True
-            if sale["due_paisa"] > 0:
-                reduce = min(sale["due_paisa"], amount)
+            due = conn.execute("SELECT due_paisa FROM sales WHERE id = ?", (sale_id,)).fetchone()["due_paisa"]
+            if due > 0:
                 conn.execute(
-                    "UPDATE sales SET due_paisa = due_paisa - ?, total_paisa = MAX(0, total_paisa - ?) WHERE id = ?",
-                    (reduce, amount, sale_id),
+                    "UPDATE sales SET due_paisa = due_paisa - ? WHERE id = ?",
+                    (min(due, amount), sale_id),
                 )
         if not any_return:
             raise ValueError("Nothing to return")
@@ -352,3 +366,30 @@ def void_sale(sale_id: int, reason: str) -> None:
             (STATUS_VOIDED, f"{sale['notes'] or ''} VOID: {reason}".strip(), sale_id),
         )
         audit_service.log("sale.void", "sales", sale_id, reason)
+
+
+def delete_sale(sale_id: int) -> str:
+    """Remove a sale for good. Tablets not already returned go back into their batch."""
+    if not Session.is_owner():
+        raise ValueError("Only the owner can delete a sale")
+    with transaction() as conn:
+        sale = conn.execute("SELECT * FROM sales WHERE id = ?", (sale_id,)).fetchone()
+        if not sale:
+            raise ValueError("Sale not found")
+        label = sale["invoice_no"] or f"held #{sale_id}"
+        if sale["status"] not in (STATUS_HELD, STATUS_VOIDED):
+            for item in conn.execute("SELECT * FROM sale_items WHERE sale_id = ?", (sale_id,)).fetchall():
+                back = conn.execute(
+                    "SELECT COALESCE(SUM(qty),0) AS q FROM sale_returns WHERE sale_item_id = ?",
+                    (item["id"],),
+                ).fetchone()["q"]
+                left = item["qty"] - back
+                if left > 0:
+                    stock_service.add_stock(conn, item["batch_id"], left, REF_SALE_RETURN, sale_id, f"Sale deleted {label}")
+        conn.execute("DELETE FROM customer_payments WHERE sale_id = ? AND notes = 'Sale payment'", (sale_id,))
+        conn.execute("UPDATE customer_payments SET sale_id = NULL WHERE sale_id = ?", (sale_id,))
+        conn.execute("DELETE FROM sale_returns WHERE sale_id = ?", (sale_id,))
+        conn.execute("DELETE FROM sale_items WHERE sale_id = ?", (sale_id,))
+        conn.execute("DELETE FROM sales WHERE id = ?", (sale_id,))
+        audit_service.log("sale.delete", "sales", sale_id, label)
+    return "deleted"

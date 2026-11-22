@@ -41,14 +41,14 @@ class UdhaarPage(QWidget):
 
         self.tabs.addTab(bal_w, t("udhaar"))
         self.tabs.addTab(over_w, t("overdue"))
-        self.tabs.addTab(led_w, t("stock_ledger"))
+        self.tabs.addTab(led_w, t("customer_ledger"))
         self.reload()
 
     def retranslate(self) -> None:
         self.pay_btn.setText(t("record_payment"))
         self.tabs.setTabText(0, t("udhaar"))
         self.tabs.setTabText(1, t("overdue"))
-        self.tabs.setTabText(2, t("stock_ledger"))
+        self.tabs.setTabText(2, t("customer_ledger"))
         self.bal_table.set_headers([t("name"), t("phone"), t("cnic"), t("balance"), t("date")])
         self.over_table.set_headers([t("name"), t("phone"), t("invoice"), t("date"), t("due"), t("overdue")])
         self.led_table.set_headers([t("date"), t("ref"), t("details"), "Debit", "Credit", t("balance")])

@@ -7,7 +7,17 @@ from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 
 from app.db.database import get_db, rows_to_dicts
 from app.services import customer_service, stock_service, supplier_service
-from app.utils.dates import month_start, prev_month_range, prev_year_range, today, week_start, year_start
+from app.utils.dates import (
+    iter_months,
+    iter_weeks,
+    iter_years,
+    month_start,
+    prev_month_range,
+    prev_year_range,
+    today,
+    week_start,
+    year_start,
+)
 from app.utils.money import from_paisa
 
 
@@ -75,6 +85,22 @@ def profit_period(kind: str) -> dict:
     return _sales_profit(t, t)
 
 
+def period_series(kind: str, start: str, end: str) -> list[dict]:
+    """Sale + profit rows for each week, month, or year in the chosen range."""
+    if kind == "weekly":
+        buckets = iter_weeks(start, end)
+    elif kind == "yearly":
+        buckets = iter_years(start, end)
+    else:
+        buckets = iter_months(start, end)
+    rows = []
+    for a, b in buckets:
+        row = _sales_profit(a, b)
+        row["label"] = a if kind != "yearly" else a[:4]
+        rows.append(row)
+    return rows
+
+
 def comparison() -> dict:
     t = today()
     this_month = _sales_profit(month_start(), t)
@@ -121,7 +147,8 @@ def top_customers(start: str, end: str, limit: int = 20) -> list[dict]:
     return rows_to_dicts(
         get_db().execute(
             """
-            SELECT c.id, c.name, c.phone, COUNT(s.id) AS invoices, SUM(s.total_paisa) AS sale_paisa
+            SELECT c.id, c.name, c.phone, COUNT(s.id) AS invoices,
+                   SUM(s.total_paisa - COALESCE((SELECT SUM(amount_paisa) FROM sale_returns WHERE sale_id = s.id), 0)) AS sale_paisa
             FROM sales s
             JOIN customers c ON c.id = s.customer_id
             WHERE s.status NOT IN ('held', 'voided') AND s.date >= ? AND s.date <= ?

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.config import EXPIRY_ALERT_DAYS
 from app.db.database import get_db
 from app.services import customer_service, stock_service, supplier_service
 from app.utils.dates import month_start, today, week_start, year_start
@@ -22,23 +23,23 @@ def period_totals(start: str, end: str) -> dict:
         """,
         (start, end),
     ).fetchone()["p"]
-    reversal = get_db().execute(
+    ret = get_db().execute(
         """
-        SELECT COALESCE(SUM(sr.profit_reversal_paisa),0) AS r
+        SELECT COALESCE(SUM(sr.profit_reversal_paisa),0) AS r, COALESCE(SUM(sr.amount_paisa),0) AS a
         FROM sale_returns sr
         JOIN sales s ON s.id = sr.sale_id
         WHERE s.status NOT IN ('held', 'voided') AND s.date >= ? AND s.date <= ?
         """,
         (start, end),
-    ).fetchone()["r"]
-    return {"sale": sale or 0, "profit": (profit or 0) - (reversal or 0)}
+    ).fetchone()
+    return {"sale": max(0, (sale or 0) - (ret["a"] or 0)), "profit": (profit or 0) - (ret["r"] or 0)}
 
 
 def summary() -> dict:
     t = today()
     val = stock_service.valuation()
     low = stock_service.low_stock()
-    exp = stock_service.expiring_within(30)
+    exp = stock_service.expiring_within(EXPIRY_ALERT_DAYS)
     out = {
         "today": period_totals(t, t),
         "week": period_totals(week_start(), t),

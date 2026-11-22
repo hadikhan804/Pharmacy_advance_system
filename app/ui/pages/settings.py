@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtPrintSupport import QPrinterInfo
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -17,7 +20,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.config import data_dir
 from app.i18n import t
+from app.printing import escpos, receipt
 from app.services import backup_service, settings_service
 from app.ui.widgets.helpers import ask, error, info
 
@@ -92,6 +97,46 @@ class SettingsPage(QWidget):
         form.addRow(t("footer_en"), self.footer_en)
         form.addRow(t("footer_ur"), self.footer_ur)
         form.addRow(t("printer"), self.printer)
+        self.receipt_mode = QComboBox()
+        self.receipt_mode.addItem(t("receipt_mode_direct"), "direct")
+        self.receipt_mode.addItem(t("receipt_mode_driver"), "driver")
+        form.addRow(t("receipt_mode"), self.receipt_mode)
+        self.paper = QComboBox()
+        self.paper.addItem("80 mm (48)", "48")
+        self.paper.addItem("80 mm (42)", "42")
+        self.paper.addItem("58 mm (32)", "32")
+        form.addRow(t("paper_width"), self.paper)
+        self.feed = QSpinBox()
+        self.feed.setRange(0, 10)
+        form.addRow(t("feed_before_cut"), self.feed)
+        p_row = QHBoxLayout()
+        self.test_btn = QPushButton(t("test_print"))
+        self.test_btn.setObjectName("GhostBtn")
+        self.test_btn.clicked.connect(self._test_print)
+        self.queue_btn = QPushButton(t("printer_state"))
+        self.queue_btn.setObjectName("GhostBtn")
+        self.queue_btn.clicked.connect(self._printer_state)
+        p_row.addWidget(self.test_btn)
+        p_row.addWidget(self.queue_btn)
+        p_row.addStretch()
+        p_w = QWidget()
+        p_w.setLayout(p_row)
+        form.addRow("", p_w)
+        self.printer_hint = QLabel(t("printer_hint"))
+        self.printer_hint.setWordWrap(True)
+        self.printer_hint.setObjectName("Muted")
+        form.addRow("", self.printer_hint)
+        d_row = QHBoxLayout()
+        self.data_lab = QLineEdit(str(data_dir()))
+        self.data_lab.setReadOnly(True)
+        self.data_btn = QPushButton(t("open_folder"))
+        self.data_btn.setObjectName("GhostBtn")
+        self.data_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(data_dir()))))
+        d_row.addWidget(self.data_lab)
+        d_row.addWidget(self.data_btn)
+        d_w = QWidget()
+        d_w.setLayout(d_row)
+        form.addRow(t("data_folder"), d_w)
         form.addRow(t("default_gst"), self.gst)
         form.addRow(t("language"), self.lang)
         form.addRow(t("backup_folder"), b_w)
@@ -126,6 +171,10 @@ class SettingsPage(QWidget):
         self.bak_btn.setText(t("backup_now"))
         self.exp_btn.setText(t("export_everything"))
         self.res_btn.setText(t("restore"))
+        self.printer_hint.setText(t("printer_hint"))
+        self.test_btn.setText(t("test_print"))
+        self.queue_btn.setText(t("printer_state"))
+        self.data_btn.setText(t("open_folder"))
         self._load()
 
     def reload(self) -> None:
@@ -143,6 +192,14 @@ class SettingsPage(QWidget):
         idx = self.printer.findText(d["printer_name"])
         if idx >= 0:
             self.printer.setCurrentIndex(idx)
+        idx = self.receipt_mode.findData(settings_service.get("receipt_mode", "direct") or "direct")
+        self.receipt_mode.setCurrentIndex(max(idx, 0))
+        idx = self.paper.findData(settings_service.get("thermal_width", "48") or "48")
+        self.paper.setCurrentIndex(max(idx, 0))
+        try:
+            self.feed.setValue(int(settings_service.get("thermal_feed", "4") or 4))
+        except ValueError:
+            self.feed.setValue(4)
         try:
             self.gst.setValue(int(float(d["default_gst"] or 0)))
         except ValueError:
@@ -172,7 +229,7 @@ class SettingsPage(QWidget):
 
     def _export_all(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
-            self, t("export_everything"), "YasirMedicalStore_export.yms", "Backup (*.yms *.zip)"
+            self, t("export_everything"), "HadiPharmacy_export.yms", "Backup (*.yms *.zip)"
         )
         if not path:
             return
@@ -200,7 +257,7 @@ class SettingsPage(QWidget):
         settings_service.set_value("logo_path", self.logo.text())
         settings_service.set_value("receipt_footer_en", self.footer_en.toPlainText())
         settings_service.set_value("receipt_footer_ur", self.footer_ur.toPlainText())
-        settings_service.set_value("printer_name", self.printer.currentText())
+        self._save_printer()
         settings_service.set_value("default_gst", str(self.gst.value()))
         settings_service.set_value("backup_folder", self.backup.text())
         settings_service.set_value("secondary_backup_folder", self.secondary.text())
@@ -210,6 +267,40 @@ class SettingsPage(QWidget):
         settings_service.set_value("language", lang)
         info(self, t("success"))
         self.apply_language(lang)
+
+    def _save_printer(self) -> None:
+        settings_service.set_value("printer_name", self.printer.currentText())
+        settings_service.set_value("receipt_mode", self.receipt_mode.currentData())
+        settings_service.set_value("thermal_width", self.paper.currentData())
+        settings_service.set_value("thermal_feed", str(self.feed.value()))
+
+    def _test_print(self) -> None:
+        self._save_printer()
+        if receipt.print_test_slip(self):
+            info(self, t("test_sent"))
+        self._load()
+
+    def _printer_state(self) -> None:
+        self._save_printer()
+        name = self.printer.currentText() or escpos.default_printer()
+        if not name:
+            error(self, t("no_printers"))
+            return
+        try:
+            st = escpos.printer_state(name)
+        except OSError as exc:
+            error(self, exc)
+            return
+        status = ", ".join(st["status"]) or "ready"
+        msg = f"{name}\n{t('port')}: {st['port']}\n{t('status')}: {status}\n{t('jobs_waiting')}: {st['jobs']}"
+        if st["jobs"] and ask(self, msg + "\n\n" + t("clear_queue_q")):
+            try:
+                escpos.purge_queue(name)
+                info(self, t("queue_cleared"))
+            except OSError as exc:
+                error(self, f"{t('queue_clear_failed')}\n{exc}")
+        elif not st["jobs"]:
+            info(self, msg)
 
     def _backup(self) -> None:
         try:
@@ -230,8 +321,30 @@ class SettingsPage(QWidget):
         )
         if not path:
             return
+        password = None
+        while True:
+            try:
+                found = backup_service.check_backup(path, password)
+                break
+            except backup_service.PasswordNeeded as exc:
+                password, ok = QInputDialog.getText(
+                    self, t("restore"), f"{exc}\n\n{t('backup_password')}", QLineEdit.EchoMode.Password
+                )
+                if not ok or not password:
+                    return
+            except Exception as exc:
+                error(self, exc)
+                return
+        summary = (
+            t("restore_summary")
+            .replace("{medicines}", str(found["medicines"]))
+            .replace("{sales}", str(found["sales"]))
+            .replace("{last}", found["last_sale"] or "—")
+        )
+        if not ask(self, summary):
+            return
         try:
-            backup_service.restore_from(path)
+            backup_service.restore_from(path, password)
             info(self, t("restore_done"))
             self.logout()
         except Exception as exc:

@@ -16,15 +16,23 @@ class UsersPage(QWidget):
         self.add_btn = QPushButton(t("add"))
         self.add_btn.setObjectName("GoldBtn")
         self.pwd_btn = QPushButton(t("change_password"))
+        self.edit_btn = QPushButton(t("edit"))
+        self.edit_btn.setObjectName("GhostBtn")
+        self.toggle_btn = QPushButton(t("disable_enable"))
+        self.toggle_btn.setObjectName("DangerBtn")
         self.add_btn.clicked.connect(lambda: self._edit(None))
         self.pwd_btn.clicked.connect(self._password)
+        self.edit_btn.clicked.connect(self._edit_selected)
+        self.toggle_btn.clicked.connect(self._toggle)
         row = QWidget()
         from PySide6.QtWidgets import QHBoxLayout
 
         hl = QHBoxLayout(row)
         hl.setContentsMargins(0, 0, 0, 0)
         hl.addWidget(self.add_btn)
+        hl.addWidget(self.edit_btn)
         hl.addWidget(self.pwd_btn)
+        hl.addWidget(self.toggle_btn)
         hl.addStretch()
         layout.addWidget(row)
         self.table = DataTable([t("username"), t("role"), t("active"), t("date")])
@@ -32,8 +40,33 @@ class UsersPage(QWidget):
         layout.addWidget(self.table)
         self.reload()
 
+    def _edit_selected(self) -> None:
+        uid = self.table.selected_id()
+        if not uid:
+            error(self, t("select_row"))
+            return
+        self._edit(uid)
+
+    def _toggle(self) -> None:
+        uid = self.table.selected_id()
+        if not uid:
+            error(self, t("select_row"))
+            return
+        cur = user_service.get_user(uid)
+        if uid == Session.user_id() and cur["active"]:
+            error(self, t("cannot_disable_self"))
+            return
+        try:
+            user_service.set_active(uid, not cur["active"])
+            info(self, t("success"))
+            self.reload()
+        except Exception as exc:
+            error(self, exc)
+
     def retranslate(self) -> None:
         self.add_btn.setText(t("add"))
+        self.edit_btn.setText(t("edit"))
+        self.toggle_btn.setText(t("disable_enable"))
         self.pwd_btn.setText(t("change_password"))
         self.table.set_headers([t("username"), t("role"), t("active"), t("date")])
         self.reload()
@@ -41,7 +74,7 @@ class UsersPage(QWidget):
     def reload(self) -> None:
         rows = user_service.list_users()
         self.table.fill(
-            [[r["username"], t(r["role"]), "Yes" if r["active"] else "No", r["created_at"]] for r in rows],
+            [[r["username"], t(r["role"]), t("yes") if r["active"] else t("no"), r["created_at"]] for r in rows],
             [r["id"] for r in rows],
         )
 

@@ -42,6 +42,12 @@ def get_user(user_id: int) -> dict | None:
 def create_user(username: str, password: str, role: str) -> int:
     if role not in ROLES:
         raise ValueError("Invalid role")
+    if not username.strip():
+        raise ValueError("Username is required")
+    if len(password or "") < 6:
+        raise ValueError("Password must be at least 6 characters")
+    if get_db().execute("SELECT 1 FROM users WHERE lower(username) = lower(?)", (username.strip(),)).fetchone():
+        raise ValueError("That username is already taken")
     with transaction() as conn:
         cur = conn.execute(
             """
@@ -55,7 +61,19 @@ def create_user(username: str, password: str, role: str) -> int:
         return uid
 
 
+def _keeps_an_owner(user_id: int, role: str, active: bool) -> None:
+    others = get_db().execute(
+        "SELECT COUNT(*) FROM users WHERE role = ? AND active = 1 AND id != ?", (ROLE_OWNER, user_id)
+    ).fetchone()[0]
+    if not others and (role != ROLE_OWNER or not active):
+        raise ValueError("At least one active owner account must remain, otherwise nobody can open Settings.")
+
+
 def set_active(user_id: int, active: bool) -> None:
+    cur = get_user(user_id)
+    if not cur:
+        raise ValueError("User not found")
+    _keeps_an_owner(user_id, cur["role"], active)
     with transaction():
         get_db().execute("UPDATE users SET active = ? WHERE id = ?", (1 if active else 0, user_id))
         audit_service.log("user.active", "users", user_id, str(active))
@@ -73,6 +91,17 @@ def change_password(user_id: int, new_password: str, clear_must_change: bool = T
 def update_user(user_id: int, username: str, role: str) -> None:
     if role not in (ROLE_OWNER, ROLE_CASHIER):
         raise ValueError("Invalid role")
+    if not username.strip():
+        raise ValueError("Username is required")
+    cur = get_user(user_id)
+    if not cur:
+        raise ValueError("User not found")
+    _keeps_an_owner(user_id, role, bool(cur["active"]))
+    clash = get_db().execute(
+        "SELECT id FROM users WHERE lower(username) = lower(?) AND id != ?", (username.strip(), user_id)
+    ).fetchone()
+    if clash:
+        raise ValueError("That username is already taken")
     with transaction():
         get_db().execute(
             "UPDATE users SET username = ?, role = ? WHERE id = ?",

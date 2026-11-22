@@ -13,18 +13,19 @@ def current_stock(search: str = "") -> list[dict]:
         get_db().execute(
             """
             SELECT m.id AS medicine_id, m.brand_name, m.generic_name, m.reorder_level, m.unit,
-                   c.name AS company_name,
+                   m.category, c.name AS company_name,
                    COALESCE(SUM(b.qty), 0) AS qty,
                    COALESCE(SUM(b.qty * b.cost_paisa), 0) AS value_cost,
                    COALESCE(SUM(b.qty * b.sale_paisa), 0) AS value_sale
             FROM medicines m
             LEFT JOIN companies c ON c.id = m.company_id
             LEFT JOIN batches b ON b.medicine_id = m.id
-            WHERE m.active = 1 AND (? = '' OR m.brand_name LIKE ? OR IFNULL(m.generic_name,'') LIKE ?)
+            WHERE m.active = 1 AND (? = '' OR m.brand_name LIKE ? OR IFNULL(m.generic_name,'') LIKE ?
+                  OR IFNULL(m.category,'') LIKE ?)
             GROUP BY m.id
             ORDER BY m.brand_name
             """,
-            (search.strip(), like, like),
+            (search.strip(), like, like, like),
         ).fetchall()
     )
 
@@ -48,12 +49,12 @@ def all_batches(search: str = "") -> list[dict]:
     return rows_to_dicts(
         get_db().execute(
             """
-            SELECT b.*, m.brand_name, m.generic_name, c.name AS company_name,
+            SELECT b.*, m.brand_name, m.generic_name, m.category, c.name AS company_name,
                    CASE WHEN b.expiry < date('now') THEN 1 ELSE 0 END AS expired
             FROM batches b
             JOIN medicines m ON m.id = b.medicine_id
             LEFT JOIN companies c ON c.id = m.company_id
-            WHERE (? = '' OR m.brand_name LIKE ? OR b.batch_no LIKE ?)
+            WHERE m.active = 1 AND (? = '' OR m.brand_name LIKE ? OR b.batch_no LIKE ?)
             ORDER BY m.brand_name, b.expiry
             """,
             (search.strip(), like, like),
@@ -146,6 +147,82 @@ def remove_stock(conn, batch_id: int, qty: int, ref_type: str, ref_id: int | Non
     )
 
 
+def restock_medicine(
+    medicine_id: int,
+    qty: int,
+    batch_no: str,
+    expiry: str,
+    unit_cost_paisa: int,
+    unit_sale_paisa: int,
+    pack_cost_paisa: int = 0,
+    pack_sale_paisa: int = 0,
+    notes: str = "Restock",
+) -> int:
+    """Add units onto an existing batch (same medicine + batch + expiry) or open a new one."""
+    if qty <= 0:
+        raise ValueError("Quantity must be at least 1")
+    if expiry < today():
+        raise ValueError("Expiry cannot be in the past")
+    with transaction() as conn:
+        bid = find_or_create_batch(
+            conn,
+            medicine_id,
+            batch_no.strip() or "NA",
+            expiry,
+            unit_cost_paisa,
+            unit_sale_paisa,
+        )
+        add_stock(conn, bid, qty, REF_ADJUST, medicine_id, notes)
+        if pack_cost_paisa or pack_sale_paisa:
+            conn.execute(
+                "UPDATE medicines SET cost_paisa = ?, sale_paisa = ? WHERE id = ?",
+                (pack_cost_paisa, pack_sale_paisa, medicine_id),
+            )
+        audit_service.log("stock.restock", "batches", bid, f"qty={qty} {notes}")
+        return bid
+
+
+def edit_batch(
+    batch_id: int,
+    batch_no: str,
+    expiry: str,
+    qty: int,
+    unit_cost_paisa: int,
+    unit_sale_paisa: int,
+    reason: str,
+) -> None:
+    """Correct a saved batch. Qty changes go through the ledger; prices stay consistent."""
+    if not reason.strip():
+        raise ValueError("Reason is required")
+    if qty < 0:
+        raise ValueError("Quantity cannot be negative")
+    if not expiry:
+        raise ValueError("Expiry is required")
+    with transaction() as conn:
+        batch = conn.execute("SELECT * FROM batches WHERE id = ?", (batch_id,)).fetchone()
+        if not batch:
+            raise ValueError("Batch not found")
+        old = dict(batch)
+        conn.execute(
+            """
+            UPDATE batches SET batch_no = ?, expiry = ?, cost_paisa = ?, sale_paisa = ?
+            WHERE id = ?
+            """,
+            (batch_no.strip() or old["batch_no"], expiry, int(unit_cost_paisa), int(unit_sale_paisa), batch_id),
+        )
+        delta = int(qty) - int(old["qty"])
+        if delta > 0:
+            add_stock(conn, batch_id, delta, REF_ADJUST, batch_id, f"Re-edit +{delta}: {reason}")
+        elif delta < 0:
+            remove_stock(conn, batch_id, -delta, REF_ADJUST, batch_id, f"Re-edit {delta}: {reason}")
+        audit_service.log(
+            "stock.reedit",
+            "batches",
+            batch_id,
+            f"{old['batch_no']}→{batch_no} qty {old['qty']}→{qty} {reason}",
+        )
+
+
 def adjust_stock(batch_id: int, new_qty: int, reason: str) -> None:
     with transaction() as conn:
         batch = conn.execute("SELECT * FROM batches WHERE id = ?", (batch_id,)).fetchone()
@@ -183,9 +260,10 @@ def ledger(search: str = "", limit: int = 1000) -> list[dict]:
 def valuation() -> dict:
     row = get_db().execute(
         """
-        SELECT COALESCE(SUM(qty * cost_paisa), 0) AS cost,
-               COALESCE(SUM(qty * sale_paisa), 0) AS sale
-        FROM batches WHERE qty > 0
+        SELECT COALESCE(SUM(b.qty * b.cost_paisa), 0) AS cost,
+               COALESCE(SUM(b.qty * b.sale_paisa), 0) AS sale
+        FROM batches b JOIN medicines m ON m.id = b.medicine_id
+        WHERE b.qty > 0 AND m.active = 1
         """
     ).fetchone()
     return {"cost": row["cost"], "sale": row["sale"]}
@@ -221,7 +299,7 @@ def expiring_within(days: int) -> list[dict]:
             FROM batches b
             JOIN medicines m ON m.id = b.medicine_id
             LEFT JOIN companies c ON c.id = m.company_id
-            WHERE b.qty > 0 AND b.expiry >= date('now') AND b.expiry <= date('now', ?)
+            WHERE m.active = 1 AND b.qty > 0 AND b.expiry >= date('now') AND b.expiry <= date('now', ?)
             ORDER BY b.expiry ASC
             """,
             (f"+{int(days)} days",),
@@ -237,7 +315,7 @@ def expired() -> list[dict]:
             FROM batches b
             JOIN medicines m ON m.id = b.medicine_id
             LEFT JOIN companies c ON c.id = m.company_id
-            WHERE b.qty > 0 AND b.expiry < date('now')
+            WHERE m.active = 1 AND b.qty > 0 AND b.expiry < date('now')
             ORDER BY b.expiry ASC
             """
         ).fetchall()

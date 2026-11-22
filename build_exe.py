@@ -25,21 +25,46 @@ def make_icon() -> None:
 
 def write_readme(folder: Path) -> None:
     (folder / "HOW_TO_RUN.txt").write_text(
-        "Yasir Medical Store\n"
-        "===================\n\n"
+        "Hadi Pharmacy\n"
+        "=============\n\n"
         "Do not open the program from inside a zip.\n"
         "Windows Temp cannot load python312.dll.\n\n"
-        "Best: send YasirMedicalStore-Setup.exe\n"
-        "It copies the app to the Desktop and starts it.\n\n"
+        "Best: send HadiPharmacy-Setup.exe\n"
+        "It installs the app in the SAME folder where the Setup file is, and starts it.\n\n"
         "If you only have the zip:\n"
-        "1. Right-click the zip → Extract All → Desktop\n"
-        "2. Open the YasirMedicalStore folder\n"
-        "3. Double-click YasirMedicalStore.exe\n"
+        "1. Right-click the zip → Extract All → any normal folder\n"
+        "2. Open the HadiPharmacy folder\n"
+        "3. Double-click HadiPharmacy.exe\n"
         "4. Login: admin / admin123\n\n"
-        "Keep YasirMedicalStore.exe and the _internal folder together.\n"
-        "The shop database (pharmacy.db) is created in that folder.\n",
+        "Keep HadiPharmacy.exe and the _internal folder together.\n\n"
+        "Shop data lives in the 'data' folder next to the exe:\n"
+        "  data\\pharmacy.db   (all medicines, stock, sales)\n"
+        "  data\\backups       (automatic daily + event backups)\n"
+        "  data\\bills         (saved bills)\n\n"
+        "Running Setup again never touches the data folder.\n"
+        "A safety copy is also kept in %LOCALAPPDATA%\\HadiPharmacy\\mirror.\n"
+        "If the app folder is deleted and installed again, the app brings that data back automatically.\n\n"
+        "NEVER delete the data folder. Close the app with Logout before running Setup.\n\n"
+        "Full instructions: open 'User Guide.html' in this folder,\n"
+        "or press F1 / click Help inside the program.\n",
         encoding="utf-8",
     )
+    write_guide_html(folder)
+
+
+def write_guide_html(folder: Path) -> None:
+    from PySide6.QtGui import QTextDocument
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication([])
+    doc = QTextDocument()
+    doc.setDefaultStyleSheet(
+        "body{font-family:'Segoe UI',Arial;font-size:11pt} h1{color:#4b3fd1} h2{color:#4b3fd1;margin-top:18px}"
+        " table{border-collapse:collapse} td,th{border:1px solid #bbb;padding:4px 8px} pre{background:#f3f3f3}"
+    )
+    doc.setMarkdown((ROOT / "app" / "docs" / "user_guide.md").read_text(encoding="utf-8"))
+    html = doc.toHtml().replace("<head>", "<head><title>Hadi Pharmacy - User Guide</title>", 1)
+    (folder / "User Guide.html").write_text(html, encoding="utf-8")
 
 
 def zip_folder(folder: Path, dest: Path) -> None:
@@ -47,6 +72,11 @@ def zip_folder(folder: Path, dest: Path) -> None:
         dest.unlink()
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in folder.rglob("*"):
+            rel = path.relative_to(folder)
+            if rel.parts and rel.parts[0].lower() in {"data", "backups", "bills"}:
+                continue
+            if path.name.lower().startswith("pharmacy.db") or path.name == "app.lock":
+                continue
             if path.is_file():
                 zf.write(path, path.relative_to(folder.parent))
 
@@ -62,7 +92,7 @@ def make_setup_exe(zipped: Path, dest: Path) -> None:
         "--onefile",
         "--windowed",
         "--name",
-        "YasirMedicalStore-Setup",
+        "HadiPharmacy-Setup",
         "--add-data",
         f"{zipped};.",
         str(ROOT / "setup_launcher.py"),
@@ -72,7 +102,7 @@ def make_setup_exe(zipped: Path, dest: Path) -> None:
     if version.exists():
         cmd.extend(["--version-file", str(version)])
     subprocess.check_call(cmd, cwd=str(ROOT))
-    built = ROOT / "dist" / "YasirMedicalStore-Setup.exe"
+    built = ROOT / "dist" / "HadiPharmacy-Setup.exe"
     if not built.exists():
         raise SystemExit("Setup EXE was not created")
     if built.resolve() != dest.resolve():
@@ -89,21 +119,21 @@ def main() -> None:
             "PyInstaller",
             "--noconfirm",
             "--clean",
-            str(ROOT / "YasirMedicalStore.spec"),
+            str(ROOT / "HadiPharmacy.spec"),
         ],
         cwd=str(ROOT),
     )
-    folder = ROOT / "dist" / "YasirMedicalStore"
-    exe = folder / "YasirMedicalStore.exe"
+    folder = ROOT / "dist" / "HadiPharmacy"
+    exe = folder / "HadiPharmacy.exe"
     if not exe.exists():
-        raise SystemExit("Build finished but dist/YasirMedicalStore/YasirMedicalStore.exe was not created")
+        raise SystemExit("Build finished but dist/HadiPharmacy/HadiPharmacy.exe was not created")
     write_readme(folder)
-    old_onefile = ROOT / "dist" / "YasirMedicalStore.exe"
+    old_onefile = ROOT / "dist" / "HadiPharmacy.exe"
     if old_onefile.exists() and old_onefile.is_file():
         old_onefile.unlink()
-    zipped = ROOT / "dist" / "YasirMedicalStore.zip"
+    zipped = ROOT / "dist" / "HadiPharmacy.zip"
     zip_folder(folder, zipped)
-    setup = ROOT / "dist" / "YasirMedicalStore-Setup.exe"
+    setup = ROOT / "dist" / "HadiPharmacy-Setup.exe"
     make_setup_exe(zipped, setup)
     print(f"App folder: {folder}")
     print(f"Zip: {zipped}")

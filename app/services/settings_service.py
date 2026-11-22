@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.config import EXPIRY_ALERT_DAYS, STORE_PHONE
 from app.db.database import get_db
 from app.services import audit_service
 
@@ -28,9 +29,9 @@ def get_all() -> dict[str, str]:
 def pharmacy_info() -> dict[str, str]:
     data = get_all()
     return {
-        "name": data.get("pharmacy_name", "Yasir Medical Store"),
+        "name": data.get("pharmacy_name", "Hadi Pharmacy"),
         "address": data.get("pharmacy_address", ""),
-        "phone": data.get("pharmacy_phone", ""),
+        "phone": data.get("pharmacy_phone") or STORE_PHONE,
         "ntn": data.get("ntn", ""),
         "logo_path": data.get("logo_path", ""),
         "footer_en": data.get("receipt_footer_en", ""),
@@ -40,20 +41,22 @@ def pharmacy_info() -> dict[str, str]:
         "language": data.get("language", "en"),
         "backup_folder": data.get("backup_folder", ""),
         "secondary_backup_folder": data.get("secondary_backup_folder", ""),
-        "expiry_alert_days": data.get("expiry_alert_days", "30,60,90"),
+        "expiry_alert_days": data.get("expiry_alert_days", f"30,90,{EXPIRY_ALERT_DAYS}"),
         "udhaar_overdue_days": data.get("udhaar_overdue_days", "30"),
         "last_verified_backup_at": data.get("last_verified_backup_at", ""),
     }
 
 
 def expiry_windows() -> list[int]:
-    raw = get("expiry_alert_days", "30,60,90")
+    raw = get("expiry_alert_days", f"30,90,{EXPIRY_ALERT_DAYS}")
     days = []
     for part in raw.split(","):
         part = part.strip()
         if part.isdigit():
             days.append(int(part))
-    return days or [30, 60, 90]
+    if EXPIRY_ALERT_DAYS not in days:
+        days.append(EXPIRY_ALERT_DAYS)
+    return days or [30, 90, EXPIRY_ALERT_DAYS]
 
 
 def default_gst() -> float:

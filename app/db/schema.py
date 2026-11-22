@@ -248,6 +248,21 @@ CREATE TABLE IF NOT EXISTS backup_log (
     details TEXT
 );
 
+CREATE TABLE IF NOT EXISTS period_closes (
+    id INTEGER PRIMARY KEY,
+    period_key TEXT NOT NULL UNIQUE,
+    period_kind TEXT NOT NULL DEFAULT 'month',
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    sale_paisa INTEGER NOT NULL DEFAULT 0,
+    profit_paisa INTEGER NOT NULL DEFAULT 0,
+    invoices INTEGER NOT NULL DEFAULT 0,
+    stock_cost_paisa INTEGER NOT NULL DEFAULT 0,
+    stock_sale_paisa INTEGER NOT NULL DEFAULT 0,
+    closed_at TEXT NOT NULL,
+    user_id INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT

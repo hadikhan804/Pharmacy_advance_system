@@ -77,6 +77,43 @@ def _migrate(conn: sqlite3.Connection) -> None:
         raw = str(row["pack_size"] or "").strip()
         if raw.isdigit() and int(raw) > 1:
             conn.execute("UPDATE medicines SET units_per_pack = ? WHERE id = ?", (int(raw), row["id"]))
+    _add_columns(conn, "companies", (("phone", "TEXT DEFAULT ''"), ("address", "TEXT DEFAULT ''")))
+    _add_columns(conn, "suppliers", (("company_id", "INTEGER"),))
+    _link_suppliers_to_companies(conn)
+    conn.execute(
+        """
+        UPDATE sales SET total_paisa = MAX(0, subtotal_paisa + gst_paisa - discount_paisa)
+        WHERE status NOT IN ('held', 'voided')
+          AND total_paisa < MAX(0, subtotal_paisa + gst_paisa - discount_paisa)
+          AND EXISTS (SELECT 1 FROM sale_returns r WHERE r.sale_id = sales.id)
+        """
+    )
+
+
+def _add_columns(conn: sqlite3.Connection, table: str, columns) -> None:
+    have = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    for name, spec in columns:
+        if name not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {spec}")
+
+
+def _link_suppliers_to_companies(conn: sqlite3.Connection) -> None:
+    """The company is the supplier. Give every old supplier row a company so its purchases and dues stay visible."""
+    for sup in conn.execute("SELECT * FROM suppliers WHERE company_id IS NULL").fetchall():
+        name = (sup["name"] or "").strip() or f"Supplier {sup['id']}"
+        row = conn.execute("SELECT id, phone, address FROM companies WHERE lower(name) = lower(?)", (name,)).fetchone()
+        if row:
+            cid = row["id"]
+            conn.execute(
+                "UPDATE companies SET phone = COALESCE(NULLIF(phone,''), ?), address = COALESCE(NULLIF(address,''), ?) WHERE id = ?",
+                (sup["phone"] or "", sup["address"] or "", cid),
+            )
+        else:
+            cid = conn.execute(
+                "INSERT INTO companies(name, notes, active, phone, address) VALUES (?, ?, ?, ?, ?)",
+                (name, sup["notes"] or "", sup["active"], sup["phone"] or "", sup["address"] or ""),
+            ).lastrowid
+        conn.execute("UPDATE suppliers SET company_id = ? WHERE id = ?", (cid, sup["id"]))
 
 
 @contextmanager

@@ -59,6 +59,28 @@ def save_customer(data: dict, customer_id: int | None = None) -> int:
         return cur.lastrowid
 
 
+def delete_customer(customer_id: int) -> str:
+    """Customers with udhaar cannot be removed. Customers with bills are archived, not erased."""
+    cust = get_customer(customer_id)
+    if not cust:
+        raise ValueError("Customer not found")
+    if cust["balance_paisa"] > 0:
+        raise ValueError(
+            f"{cust['name']} still owes Rs {cust['balance_paisa'] / 100:,.2f}. Record the udhaar payment first."
+        )
+    db = get_db()
+    used = db.execute("SELECT COUNT(*) FROM sales WHERE customer_id = ?", (customer_id,)).fetchone()[0]
+    used += db.execute("SELECT COUNT(*) FROM customer_payments WHERE customer_id = ?", (customer_id,)).fetchone()[0]
+    with transaction() as conn:
+        if used:
+            conn.execute("UPDATE customers SET active = 0 WHERE id = ?", (customer_id,))
+            audit_service.log("customer.archive", "customers", customer_id, cust["name"])
+            return "archived"
+        conn.execute("DELETE FROM customers WHERE id = ?", (customer_id,))
+        audit_service.log("customer.delete", "customers", customer_id, cust["name"])
+        return "deleted"
+
+
 def ledger(customer_id: int) -> list[dict]:
     sales = rows_to_dicts(
         get_db().execute(

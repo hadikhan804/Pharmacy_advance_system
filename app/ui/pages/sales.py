@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from app.i18n import t
 from app.printing.receipt import print_sale, show_bill
 from app.services import sale_service
-from app.ui.widgets.helpers import DataTable, SearchBar, error, info
+from app.ui.widgets.helpers import DataTable, SearchBar, action_button, error, info, safe_delete
 from app.utils.money import format_pkr
 
 
@@ -25,15 +25,15 @@ class SalesPage(QWidget):
         self.view_btn = QPushButton(t("view_bill"))
         self.view_btn.setObjectName("GoldBtn")
         self.ret_btn = QPushButton(t("sale_return"))
-        self.void_btn = QPushButton(t("void_sale"))
+        self.del_btn = action_button(t("delete_sale"), "DangerBtn")
         self.p80 = QPushButton(t("print_80"))
         self.pa4 = QPushButton(t("print_a4"))
         self.view_btn.clicked.connect(self._view)
         self.ret_btn.clicked.connect(self._return)
-        self.void_btn.clicked.connect(self._void)
+        self.del_btn.clicked.connect(self._delete)
         self.p80.clicked.connect(lambda: self._print(True))
         self.pa4.clicked.connect(lambda: self._print(False))
-        self.search = SearchBar(lambda _: self.reload(), [self.view_btn, self.ret_btn, self.void_btn, self.p80, self.pa4])
+        self.search = SearchBar(lambda _: self.reload(), [self.view_btn, self.ret_btn, self.del_btn, self.p80, self.pa4])
         layout.addWidget(self.search)
         self.table = DataTable(
             [t("invoice"), t("date"), t("customer"), t("total"), t("due"), t("profit"), t("payment"), t("status"), t("user")]
@@ -45,7 +45,7 @@ class SalesPage(QWidget):
     def retranslate(self) -> None:
         self.view_btn.setText(t("view_bill"))
         self.ret_btn.setText(t("sale_return"))
-        self.void_btn.setText(t("void_sale"))
+        self.del_btn.setText(t("delete_sale"))
         self.p80.setText(t("print_80"))
         self.pa4.setText(t("print_a4"))
         self.search.edit.setPlaceholderText(t("search"))
@@ -62,7 +62,7 @@ class SalesPage(QWidget):
                     r["invoice_no"],
                     r["date"],
                     r["customer_name"],
-                    r["total_paisa"],
+                    max(0, r["total_paisa"] - r["returned_paisa"]),
                     r["due_paisa"],
                     r["profit_paisa"],
                     r["payment_method"],
@@ -137,19 +137,10 @@ class SalesPage(QWidget):
             except Exception as exc:
                 error(self, exc)
 
-    def _void(self) -> None:
-        sid = self.table.selected_id()
-        if not sid:
-            error(self, t("select_row"))
+    def _delete(self) -> None:
+        sale = self._selected_sale()
+        if not sale:
             return
-        reason = QLineEdit()
-        from app.ui.widgets.helpers import form_dialog
-
-        dlg = form_dialog(self, t("void_sale"), [(t("reason"), reason)])
-        if dlg.exec():
-            try:
-                sale_service.void_sale(sid, reason.text())
-                info(self, t("success"))
-                self.reload()
-            except Exception as exc:
-                error(self, exc)
+        name = f"{t('invoice')} {sale['invoice_no']} ({format_pkr(sale['total_paisa'])})"
+        if safe_delete(self, name, lambda: sale_service.delete_sale(sale["id"]), t("delete_sale_detail")):
+            self.reload()

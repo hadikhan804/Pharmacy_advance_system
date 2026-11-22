@@ -1,7 +1,7 @@
-# Yasir Medical Store — Pharmacy POS
+# Hadi Pharmacy — Pharmacy POS
 # Product spec — Revision 2 (data reliability + UX pass)
 
-Offline Windows desktop software for a Pakistani pharmacy. Brand name: **Yasir Medical Store**.
+Offline Windows desktop software for a Pakistani pharmacy. Brand name: **Hadi Pharmacy**.
 Subtitle: **Pharmacy POS System**.
 
 This revision keeps everything already built (Rev 1) and adds requirements for
@@ -33,9 +33,9 @@ The owner needs a **simple, offline, Urdu/English desktop application** that run
 
 ## 2. Product (what exists now)
 
-A single-PC Windows app named **Yasir Medical Store**. Fully offline. No cloud, no internet required after install.
+A single-PC Windows app named **Hadi Pharmacy**. Fully offline. No cloud, no internet required after install.
 
-Default pharmacy name on receipts/settings: **Yasir Medical Store**.
+Default pharmacy name on receipts/settings: **Hadi Pharmacy**.
 
 ### 2.1 How to run
 
@@ -62,17 +62,17 @@ Default login (first run):
 
 Database file (same folder as the EXE):
 
-- `pharmacy.db` is created next to `YasirMedicalStore.exe` the first time you run it.
+- `pharmacy.db` is created next to `HadiPharmacy.exe` the first time you run it.
 - If `pharmacy.db` is already in that folder, the app always opens it (replace/update the EXE, the data stays).
 - Backups default to a `backups` folder next to the EXE.
-- If the EXE folder is not writable, it falls back to `%APPDATA%\YasirMedicalStore\`.
-- If this folder has no database yet but an older `%APPDATA%\YasirMedicalStore\pharmacy.db` (or `PharmacyPOS`) exists, that file is copied once.
+- If the EXE folder is not writable, it falls back to `%APPDATA%\HadiPharmacy\`.
+- If this folder has no database yet but an older `%APPDATA%\HadiPharmacy\pharmacy.db` (or `PharmacyPOS`) exists, that file is copied once.
 
 ### 2.2 Backup & data recovery **(CHANGED — expanded)**
 
 Rev 1 had: one automatic backup per day, stored under `%APPDATA%`, manual backup/restore in Settings. That is not enough on its own — `%APPDATA%` is deleted along with the rest of the profile in a reinstall, a "clean my PC" cleanup, or a format. Revision 2 requires:
 
-- **(NEW) Dual-location backup by default.** On first run, the setup wizard asks the owner to choose a secondary backup location outside the Windows profile — a USB drive, an external folder, or a detected cloud-sync folder (Google Drive / OneDrive / Dropbox desktop folder, if present on the machine). Every backup is written to `%APPDATA%\YasirMedicalStore\backups\` **and** to this secondary location. If the secondary location is unavailable at backup time (USB unplugged), the app queues it and retries on next launch, and shows a Settings warning until it succeeds.
+- **(NEW) Dual-location backup by default.** On first run, the setup wizard asks the owner to choose a secondary backup location outside the Windows profile — a USB drive, an external folder, or a detected cloud-sync folder (Google Drive / OneDrive / Dropbox desktop folder, if present on the machine). Every backup is written to `%APPDATA%\HadiPharmacy\backups\` **and** to this secondary location. If the secondary location is unavailable at backup time (USB unplugged), the app queues it and retries on next launch, and shows a Settings warning until it succeeds.
 - **(NEW) Event-triggered backups, not just daily.** In addition to the once-per-day automatic backup on startup, trigger an incremental backup immediately after: end-of-day close, a completed purchase, and before any restore or destructive settings change.
 - **(NEW) Human-readable export alongside the binary backup.** Every backup cycle also writes an `.xlsx` export of medicines, current stock, sales summary, udhaar balances, and payables balances into the same backup folder. If the `.db` file is ever unreadable, the owner (or anyone helping him) can still open the numbers in Excel.
 - **(NEW) Backup integrity check.** After writing a backup, run `PRAGMA integrity_check` (or equivalent) on the copy. Settings shows "Last verified backup: <date/time>" and turns red if the most recent backup is missing, stale (>48h), or failed verification.
@@ -129,7 +129,7 @@ Architecture: UI pages call **services**; services use one SQLite connection and
 
 Global shortcuts (main window): **F2** search (opens POS), **F8** hold, **F9** pay, **F10** print last receipt. On POS: **Delete** removes selected cart line, **Esc** clears cart, **(NEW)** typing a quantity then an item barcode/name applies that quantity directly.
 
-UI chrome: top brand bar "YASIR MEDICAL STORE / PHARMACY POS SYSTEM", white icon sidebar with gold tiles, white content card, gold/purple buttons.
+UI chrome: top brand bar "HADI PHARMACY / PHARMACY POS SYSTEM", white icon sidebar with gold tiles, white content card, gold/purple buttons.
 
 **(NEW) First-run setup wizard.** Before the main window is used for the first time, a guided wizard collects: pharmacy name, address, phone, NTN, logo, default GST %, printer, language, and the secondary backup location (§2.2). Replaces scattering these into Settings after the fact.
 

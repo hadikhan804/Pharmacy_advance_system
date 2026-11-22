@@ -27,11 +27,12 @@ def list_purchases(search: str = "") -> list[dict]:
     return rows_to_dicts(
         get_db().execute(
             """
-            SELECT p.*, s.name AS supplier_name,
+            SELECT p.*, COALESCE(c.name, s.name) AS supplier_name, s.company_id,
                    (p.total_paisa - p.returned_paisa - p.paid_paisa) AS due_paisa
             FROM purchases p
             JOIN suppliers s ON s.id = p.supplier_id
-            WHERE (? = '' OR s.name LIKE ? OR IFNULL(p.invoice_no,'') LIKE ?)
+            LEFT JOIN companies c ON c.id = s.company_id
+            WHERE (? = '' OR COALESCE(c.name, s.name) LIKE ? OR IFNULL(p.invoice_no,'') LIKE ?)
             ORDER BY p.id DESC
             """,
             (search.strip(), like, like),
@@ -43,10 +44,11 @@ def get_purchase(purchase_id: int) -> dict | None:
     header = row_to_dict(
         get_db().execute(
             """
-            SELECT p.*, s.name AS supplier_name,
+            SELECT p.*, COALESCE(c.name, s.name) AS supplier_name, s.company_id,
                    (p.total_paisa - p.returned_paisa - p.paid_paisa) AS due_paisa
             FROM purchases p
             JOIN suppliers s ON s.id = p.supplier_id
+            LEFT JOIN companies c ON c.id = s.company_id
             WHERE p.id = ?
             """,
             (purchase_id,),
@@ -68,11 +70,24 @@ def get_purchase(purchase_id: int) -> dict | None:
     return header
 
 
-def create_purchase(supplier_id: int, invoice_no: str, date: str, items: list[dict], paid_paisa: int = 0, notes: str = "") -> int:
+def create_purchase(company_id: int, invoice_no: str, date: str, items: list[dict], paid_paisa: int = 0, notes: str = "") -> int:
+    """Stock in from a company. The company is the supplier."""
+    from app.services.supplier_service import supplier_for_company
+
+    if not company_id:
+        raise ValueError("Choose the company")
     if not items:
         raise ValueError("No items")
-    total = sum(int(i["qty"]) * int(i["cost_paisa"]) for i in items)
+    for i in items:
+        if int(i["qty"]) <= 0:
+            raise ValueError("Quantity must be more than 0")
+        if int(i["cost_paisa"]) < 0 or int(i["sale_paisa"]) < 0:
+            raise ValueError("Price cannot be negative")
+    total = sum(int(i.get("pack_cost_paisa") or int(i["qty"]) * int(i["cost_paisa"])) for i in items)
+    if paid_paisa < 0 or paid_paisa > total:
+        raise ValueError("Paid amount cannot be more than the bill total")
     with transaction() as conn:
+        supplier_id = supplier_for_company(company_id, conn)
         cur = conn.execute(
             """
             INSERT INTO purchases(supplier_id, invoice_no, date, total_paisa, paid_paisa, returned_paisa, status, notes, user_id, ts)
@@ -101,6 +116,13 @@ def create_purchase(supplier_id: int, invoice_no: str, date: str, items: list[di
                 int(item["sale_paisa"]),
             )
             stock_service.add_stock(conn, batch_id, int(item["qty"]), REF_PURCHASE, pid, invoice_no)
+            pack_cost = int(item.get("pack_cost_one") or 0)
+            pack_sale = int(item.get("pack_sale_one") or 0)
+            if pack_cost or pack_sale:
+                conn.execute(
+                    "UPDATE medicines SET cost_paisa = ?, sale_paisa = ? WHERE id = ?",
+                    (pack_cost or 0, pack_sale or 0, item["medicine_id"]),
+                )
             conn.execute(
                 """
                 INSERT INTO purchase_items(purchase_id, medicine_id, batch_id, batch_no, expiry, qty, cost_paisa, sale_paisa)
@@ -142,6 +164,9 @@ def add_payment(purchase_id: int, amount_paisa: int, method: str = "Cash", notes
         row = conn.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
         if not row:
             raise ValueError("Purchase not found")
+        due = row["total_paisa"] - row["returned_paisa"] - row["paid_paisa"]
+        if amount_paisa > due:
+            raise ValueError(f"Payment is more than the amount due (Rs {max(due, 0) / 100:,.2f})")
         conn.execute("UPDATE purchases SET paid_paisa = paid_paisa + ? WHERE id = ?", (amount_paisa, purchase_id))
         conn.execute(
             """
@@ -189,3 +214,37 @@ def return_items(purchase_id: int, lines: list[dict], reason: str) -> None:
         conn.execute("UPDATE purchases SET returned_paisa = returned_paisa + ? WHERE id = ?", (total_return, purchase_id))
         _refresh_status(conn, purchase_id)
         audit_service.log("purchase.return", "purchases", purchase_id, reason)
+
+
+def delete_purchase(purchase_id: int, reason: str) -> None:
+    """Undo a wrong purchase entry. Only allowed while none of its stock has been sold or returned."""
+    import json
+
+    if not reason.strip():
+        raise ValueError("Reason is required")
+    purchase = get_purchase(purchase_id)
+    if not purchase:
+        raise ValueError("Purchase not found")
+    db = get_db()
+    if db.execute("SELECT COUNT(*) FROM purchase_returns WHERE purchase_id = ?", (purchase_id,)).fetchone()[0]:
+        raise ValueError("This purchase already has returns. Use Stock re-edit instead of delete.")
+    if db.execute("SELECT COUNT(*) FROM supplier_payments WHERE purchase_id = ?", (purchase_id,)).fetchone()[0]:
+        raise ValueError("A company payment is linked to this purchase. It cannot be deleted.")
+    need: dict[int, int] = {}
+    for item in purchase["items"]:
+        need[item["batch_id"]] = need.get(item["batch_id"], 0) + int(item["qty"])
+    for batch_id, qty in need.items():
+        batch = db.execute("SELECT qty, batch_no FROM batches WHERE id = ?", (batch_id,)).fetchone()
+        if not batch or batch["qty"] < qty:
+            raise ValueError(
+                f"Stock from batch {batch['batch_no'] if batch else batch_id} is already sold. "
+                "Use Stock re-edit to correct it instead of deleting the purchase."
+            )
+    snapshot = json.dumps({k: v for k, v in purchase.items() if k != "items"} | {"items": purchase["items"]}, default=str)
+    with transaction() as conn:
+        for batch_id, qty in need.items():
+            stock_service.remove_stock(conn, batch_id, qty, REF_PURCHASE_RETURN, purchase_id, f"purchase deleted: {reason}")
+        conn.execute("DELETE FROM purchase_payments WHERE purchase_id = ?", (purchase_id,))
+        conn.execute("DELETE FROM purchase_items WHERE purchase_id = ?", (purchase_id,))
+        conn.execute("DELETE FROM purchases WHERE id = ?", (purchase_id,))
+        audit_service.log("purchase.delete", "purchases", purchase_id, f"{reason} | {snapshot}")

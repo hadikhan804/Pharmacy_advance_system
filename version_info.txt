@@ -16,13 +16,13 @@ VSVersionInfo(
         StringTable(
           u'040904B0',
           [
-            StringStruct(u'CompanyName', u'Yasir Medical Store'),
-            StringStruct(u'FileDescription', u'Yasir Medical Store Pharmacy POS'),
+            StringStruct(u'CompanyName', u'Hadi Pharmacy'),
+            StringStruct(u'FileDescription', u'Hadi Pharmacy Pharmacy POS'),
             StringStruct(u'FileVersion', u'1.0.0.0'),
-            StringStruct(u'InternalName', u'YasirMedicalStore'),
-            StringStruct(u'LegalCopyright', u'Copyright Yasir Medical Store'),
-            StringStruct(u'OriginalFilename', u'YasirMedicalStore.exe'),
-            StringStruct(u'ProductName', u'Yasir Medical Store'),
+            StringStruct(u'InternalName', u'HadiPharmacy'),
+            StringStruct(u'LegalCopyright', u'Copyright Hadi Pharmacy'),
+            StringStruct(u'OriginalFilename', u'HadiPharmacy.exe'),
+            StringStruct(u'ProductName', u'Hadi Pharmacy'),
             StringStruct(u'ProductVersion', u'1.0.0.0'),
           ]
         )

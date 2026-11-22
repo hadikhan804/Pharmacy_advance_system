@@ -9,12 +9,12 @@ if not exist "%TARGET%" (
 )
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$desktop = [Environment]::GetFolderPath('Desktop');" ^
-  "$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop 'Yasir Medical Store.lnk'));" ^
+  "$s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop 'Hadi Pharmacy.lnk'));" ^
   "$s.TargetPath = '%TARGET%';" ^
   "$s.Arguments = '\"%~dp0run.py\"';" ^
   "$s.WorkingDirectory = '%~dp0';" ^
   "$s.WindowStyle = 1;" ^
-  "$s.Description = 'Yasir Medical Store — Pharmacy POS';" ^
+  "$s.Description = 'Hadi Pharmacy — Pharmacy POS';" ^
   "$s.Save();" ^
   "Write-Host 'Shortcut created on your Desktop.'"
 pause

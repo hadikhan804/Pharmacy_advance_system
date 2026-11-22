@@ -11,6 +11,7 @@ datas = [
     (str(ROOT / "app" / "i18n" / "en.json"), "app/i18n"),
     (str(ROOT / "app" / "i18n" / "ur.json"), "app/i18n"),
     (str(ROOT / "app" / "ui" / "style.qss"), "app/ui"),
+    (str(ROOT / "app" / "docs" / "user_guide.md"), "app/docs"),
 ]
 
 hiddenimports = collect_submodules("app") + [
@@ -43,7 +44,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="YasirMedicalStore",
+    name="HadiPharmacy",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -65,5 +66,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="YasirMedicalStore",
+    name="HadiPharmacy",
 )

@@ -28,7 +28,7 @@ python -m venv .venv
 .venv\Scripts\python.exe run.py
 ```
 
-Or double-click `Start Yasir Medical Store.bat` after the venv is created.
+Or double-click `Start Hadi Pharmacy.bat` after the venv is created.
 
 First login:
 
@@ -40,7 +40,7 @@ Change that password after the first login. Do not use the default password on a
 ## Where data is stored
 
 - `pharmacy.db` is created in the project folder when you run from source, or next to the EXE when frozen.
-- Override the folder with the `YASIR_DATA_DIR` environment variable if needed.
+- Override the folder with the `HADI_DATA_DIR` environment variable if needed.
 - Backups go in a `backups` folder. Bills are saved under `bills`.
 - None of those files belong in Git.
 
@@ -53,8 +53,8 @@ Change that password after the first login. Do not use the default password on a
 
 That writes:
 
-- `dist/YasirMedicalStore/` — app folder (`YasirMedicalStore.exe` plus `_internal`)
-- `dist/YasirMedicalStore-Setup.exe` — copies the app to the Desktop and starts it
+- `dist/HadiPharmacy/` — app folder (`HadiPharmacy.exe` plus `_internal`)
+- `dist/HadiPharmacy-Setup.exe` — copies the app to the Desktop and starts it
 
 Send the Setup EXE, or the whole app folder. Do not open the inner EXE from inside a zip (Windows Temp cannot load `python312.dll`).
 

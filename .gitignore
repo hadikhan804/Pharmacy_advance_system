@@ -18,6 +18,8 @@ app.lock
 pharmacy.db
 backups/
 bills/
+data/
+mirror/
 *.yms
 *.xlsx
 *.pdf
@@ -27,6 +29,7 @@ build/
 dist/
 *.exe
 *.zip
+HadiPharmacy-Setup.spec
 YasirMedicalStore-Setup.spec
 
 # Local packaging leftovers
